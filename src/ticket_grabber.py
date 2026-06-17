@@ -80,9 +80,10 @@ class TicketGrabber:
         # 抢票参数
         self.grab_interval = getattr(config.strategy, 'order_interval', 0.3)
         self.monitor_interval = 1.0
-        self.max_429_count = 5
-        self._429_count = 0
+        self.max_412_count = 20
+        self._412_count = 0
         self._risk_cooldown = 60
+        self._cached_pay_money = 0  # BHYG: 100034 自动更新价格
         self._is_hot = getattr(config.event, 'hot_project', False)
         self._delta = getattr(config.strategy, 'delta', 0.05)
         
@@ -240,12 +241,11 @@ class TicketGrabber:
         server_now = self.api.get_server_time()
         local_now = time.time()
         time_offset = server_now - local_now
-        if abs(time_offset) > 1:
-            logger.info(f"时间校准: 服务器时间偏移 {time_offset:+.2f}s")
+        logger.time(f"服务器时间同步: 偏移 {time_offset:+.2f}s")
         target_time += time_offset  # 用服务器时间修正
         
         logger.info("等待开售...")
-        logger.info(f"开售时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(sale_begin))}")
+        logger.time(f"开售时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(sale_begin))}")
         logger.info(f"提前开始: {advance_ms}ms")
         
         while True:
@@ -257,21 +257,16 @@ class TicketGrabber:
                 break
             
             # 显示倒计时
-            if remaining > 3600:
+            if remaining > 60:
                 hours = int(remaining // 3600)
                 minutes = int((remaining % 3600) // 60)
-                logger.info(f"倒计时: {hours}小时{minutes}分钟")
-                time.sleep(30)
-            elif remaining > 60:
-                minutes = int(remaining // 60)
-                seconds = int(remaining % 60)
-                logger.info(f"倒计时: {minutes}分{seconds}秒")
-                time.sleep(5)
-            elif remaining > 10:
-                logger.info(f"倒计时: {int(remaining)}秒")
+                logger.time(f"倒计时: {hours}小时{minutes}分钟")
+                time.sleep(300)
+            elif remaining > 5:
+                logger.time(f"倒计时: {int(remaining)}秒")
                 time.sleep(1)
             else:
-                # 🔑 最后 10 秒：高频检查（对标 BHYG 忙等）
+                # 最后5秒静默忙等，不输出
                 time.sleep(0.1)
         
         # 🔑 BHYG 风格：prereq 预热连接 + CDN 节点检测
@@ -395,6 +390,7 @@ class TicketGrabber:
                 cached_token=self._cached_token or "",
                 cached_ptoken=self._cached_ptoken or "",
                 is_hot=self._is_hot,
+                cached_pay_money=self._cached_pay_money,
             )
             
             errno = result.get("errno", result.get("code", -1))
@@ -512,18 +508,26 @@ class TicketGrabber:
             self.grab_interval = min(self.grab_interval * 2, 5.0)
             return True
         
-        if errno in (-412, 412, 429):
-            self._429_count += 1
+        # === 412 限流（BHYG 风格：计数+冷却） ===
+        if errno in (-412, 412):
+            self._412_count += 1
             self.last_order_time = time.time()
-            logger.warning(f"第{self._attempt_count}次 | 限流 ({errno}) x{self._429_count}")
-            if self._429_count >= self.max_429_count:
-                logger.warning(f"限流过多，切换监控模式 (等60s)")
-                self.phase = GrabPhase.MONITORING
-                time.sleep(60)  # 等待60秒冷却
-                return True
-            self.grab_interval = min(self.grab_interval * 2, 5.0)
-            logger.info(f"增加抢票间隔到 {self.grab_interval:.1f}秒")
+            logger.warning(f"第{self._attempt_count}次 | 412 限流 (x{self._412_count})")
+            if self._412_count >= self.max_412_count:
+                logger.warning(f"412 次数过多({self._412_count})，等待 300s...")
+                time.sleep(300)
+                self._412_count = 0
+            time.sleep(1)
             return True
+        
+        # === 429 限流（BHYG 风格：仅日志，不计数） ===
+        if errno == 429:
+            logger.warning(f"第{self._attempt_count}次 | 429 限流，继续重试")
+            return True
+        
+        # 非 412 错误，重置 412 计数
+        if errno not in (-412, 412):
+            self._412_count = 0
         
         if errno == -352:
             logger.warning(f"gaia 风控 (-352)，等待{self._risk_cooldown}s")
@@ -569,7 +573,12 @@ class TicketGrabber:
         
         # === pay_money 自动更新（BHYG: 100034） ===
         if errno == 100034:
-            logger.warning("价格不匹配 (100034)")
+            pay_money = (result.raw_data or {}).get("data", {}).get("pay_money", 0)
+            if pay_money:
+                self._cached_pay_money = pay_money
+                logger.warning(f"价格已更新: {pay_money/100:.2f}元")
+            else:
+                logger.warning("价格不匹配 (100034)")
             self.last_order_check_time = time.time()
             return True
         
@@ -578,12 +587,13 @@ class TicketGrabber:
         
         # === 回退到字符串匹配（兼容未提取到 errno 的情况） ===
         if errno is None:
-            if "429" in message or "412" in message or "频繁" in message:
-                self._429_count += 1
-                if self._429_count >= self.max_429_count:
-                    self.phase = GrabPhase.MONITORING
-                    return True
-                self.grab_interval = min(self.grab_interval * 2, 5.0)
+            if "412" in message or "频繁" in message:
+                self._412_count += 1
+                if self._412_count >= self.max_412_count:
+                    time.sleep(300)
+                    self._412_count = 0
+                return True
+            if "429" in message:
                 return True
             if "352" in message or "风控" in message:
                 time.sleep(self._risk_cooldown)
@@ -613,13 +623,13 @@ class TicketGrabber:
         attempt = 0
         stock_check_count = 0
         last_order_time = 0
-        enable_stock_check = getattr(self.config.strategy, 'enable_stock_check', False)
+        enable_stock_check = getattr(self.config.strategy, 'enable_stock_check', True)
         
         while not self._stop_event.is_set():
             attempt += 1
             
             # 可选：BHYG 模式库存检查（默认关闭，避免额外延迟）
-            if enable_stock_check and stock_check_count == 0 and self._429_count < self.max_429_count:
+            if enable_stock_check and stock_check_count == 0 and self._412_count < self.max_412_count:
                 if not self.check_ticket_stock():
                     logger.debug(f"暂无库存，等待 {self.monitor_interval}s...")
                     time.sleep(self.monitor_interval)
@@ -692,23 +702,46 @@ class TicketGrabber:
         logger.info("-" * 50)
         
         # 1. 检查登录
-        if not self.check_login():
+        logger.info("检查登录状态...")
+        if not self.api.check_login():
+            logger.error("未登录或登录已过期")
             return TicketResult(success=False, message="未登录")
+        logger.info("登录状态正常")
         
-        # 2. 获取项目信息
+        # 2. 获取项目/场次信息
         try:
-            project_info = self.get_project_info()
+            logger.info(f"获取项目信息: {self.config.event.project_id}")
+            project = self.api.get_project_info(self.config.event.project_id)
+            logger.info(f"获取场次信息: {self.config.event.screen_id}")
+            screen = self.api.get_screen_info(
+                self.config.event.project_id,
+                self.config.event.screen_id,
+            )
+            sku_id = self.config.event.sku_id
+            selected_sku = None
+            for sku in screen.skus:
+                sid = sku.get("id")
+                if sid == sku_id or str(sid) == str(sku_id):
+                    selected_sku = sku
+                    break
+            sku_desc = selected_sku.get("desc", "未知") if selected_sku else "未知"
+            sku_price = (selected_sku.get("price", 0) / 100) if selected_sku else 0
+            count = self.config.event.count
+            total_price = sku_price * count
+            
+            from datetime import datetime
+            sale_time_str = ""
+            if project.sale_begin > 0:
+                sale_time_str = datetime.fromtimestamp(project.sale_begin).strftime('%Y-%m-%d %H:%M:%S')
+            
+            logger.info(f"项目: {project.name}")
+            logger.info(f"开售: {sale_time_str}")
+            logger.info(f"场次: {screen.name}  |  票档: {sku_desc}  |  ¥{sku_price} x {count}张  |  总价: ¥{total_price}")
         except Exception as e:
-            return TicketResult(success=False, message=f"获取项目信息失败: {e}")
+            return TicketResult(success=False, message=f"获取信息失败: {e}")
         
-        # 3. 获取场次信息
-        try:
-            screen_info = self.get_screen_info()
-        except Exception as e:
-            return TicketResult(success=False, message=f"获取场次信息失败: {e}")
-        
-        # 4. 等待开售
-        sale_begin = project_info.get("sale_begin", 0)
+        # 3. 等待开售
+        sale_begin = project.sale_begin
         now = time.time()
         
         if sale_begin > 0 and now < sale_begin:
@@ -716,10 +749,10 @@ class TicketGrabber:
         else:
             logger.info("已开售，立即开始抢票")
         
-        # 5. 执行抢票
+        # 4. 执行抢票
         result = self.grab_ticket()
         
-        # 6. 显示结果
+        # 5. 显示结果
         logger.info("-" * 50)
         if result.success:
             logger.success("抢票成功！")

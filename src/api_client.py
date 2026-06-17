@@ -514,6 +514,7 @@ class BilibiliAPI:
         cached_token: str = "",
         cached_ptoken: str = "",
         is_hot: bool = False,
+        cached_pay_money: int = 0,
     ) -> tuple:
         """创建订单（BHYG do_order_create 风格）"""
         url = f"{self.BASE_URL}/ticket/order/createV2?project_id={project_id}"
@@ -539,14 +540,15 @@ class BilibiliAPI:
         # prepare 和 create 之间延迟
         time.sleep(0.3)
         
-        # 获取价格
-        pay_money = 0
-        for screen in project.screens:
-            if screen["id"] == screen_id:
-                for sku in screen.get("ticket_list", []):
-                    if sku["id"] == sku_id:
-                        pay_money = sku.get("price", 0)
-                        break
+        # 获取价格（优先使用缓存价格，BHYG: 100034 自动更新）
+        pay_money = cached_pay_money if cached_pay_money else 0
+        if not pay_money:
+            for screen in project.screens:
+                if screen["id"] == screen_id:
+                    for sku in screen.get("ticket_list", []):
+                        if sku["id"] == sku_id:
+                            pay_money = sku.get("price", 0)
+                            break
         
         # 构建订单数据（严格对齐 BHYG do_order_create 格式）
         now_ms = int(time.time() * 1000)

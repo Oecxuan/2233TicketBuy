@@ -13,9 +13,17 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.theme import Theme
 from rich import print as rprint
 
-console = Console()
+MAIN_THEME = Theme({
+    "info": "green",
+    "warning": "yellow",
+    "error": "red bold",
+    "time": "blue",
+    "title": "bold cyan",
+})
+console = Console(theme=MAIN_THEME)
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(getattr(sys, '_MEIPASS', ''))

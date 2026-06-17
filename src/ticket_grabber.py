@@ -38,6 +38,7 @@ class TicketResult:
     message: str = ""
     timestamp: float = 0.0
     attempts: int = 0
+    raw_data: Optional[Dict] = None
 
 
 class TicketGrabber:
@@ -57,7 +58,7 @@ class TicketGrabber:
     ERROR_CODE_LIMIT = 100003         # 超出限购
     ERROR_CODE_SYSTEM = 100004        # 系统繁忙
     
-    def __init__(self, config: Config, viewers: list = None):
+    def __init__(self, config: Config, viewers: Optional[List[Dict]] = None):
         """初始化抢票器"""
         self.config = config
         self.api = create_api_client(config)
@@ -415,6 +416,7 @@ class TicketGrabber:
                     order_id=order_id,
                     message="抢票成功",
                     timestamp=time.time(),
+                    raw_data=result,
                 )
             # 🔑 -352 gaia 风控：尝试自动验证
             elif errno == -352:
@@ -428,10 +430,17 @@ class TicketGrabber:
                         success=False,
                         message=f"gaia 验证通过, 需重试",
                         timestamp=time.time(),
+                        raw_data=result,
                     )
                 else:
                     logger.warning("gaia 验证未通过，等待冷却后重试")
                     time.sleep(self._risk_cooldown)
+                    return TicketResult(
+                        success=False,
+                        message=f"errno={errno}: {msg}",
+                        timestamp=time.time(),
+                        raw_data=result,
+                    )
             else:
                 # errno=1 "请慢一点" → 冷却
                 if errno == 1:
@@ -441,6 +450,7 @@ class TicketGrabber:
                     success=False,
                     message=f"errno={errno}: {msg}",
                     timestamp=time.time(),
+                    raw_data=result,
                 )
                 
         except Exception as e:
@@ -541,7 +551,7 @@ class TicketGrabber:
             # 尝试用 GeetestHandler 自动解决
             try:
                 from .captcha import GeetestHandler
-                data = result.get("data", {})
+                data = (result.raw_data or {}).get("data", {})
                 vv = data.get("v_voucher") or data.get("ga_data", {}).get("riskParams", {}).get("v_voucher", "")
                 if vv:
                     handler = GeetestHandler(self.api.cookies)
@@ -560,8 +570,6 @@ class TicketGrabber:
         # === pay_money 自动更新（BHYG: 100034） ===
         if errno == 100034:
             logger.warning("价格不匹配 (100034)")
-            self.last_order_check_time = time.time()
-            return True
             self.last_order_check_time = time.time()
             return True
         
@@ -755,7 +763,7 @@ def _show_pay_qrcode(api, order_id: str, order_token: str):
         logger.info(f"请手动支付，订单ID: {order_id}")
 
 
-def grab_ticket_interactive(config: Config, viewers: list = None) -> TicketResult:
+def grab_ticket_interactive(config: Config, viewers: Optional[List[Dict]] = None) -> TicketResult:
     """交互式抢票"""
     grabber = TicketGrabber(config, viewers=viewers)
     

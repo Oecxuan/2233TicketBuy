@@ -40,7 +40,6 @@ MIT License
 
 - [提交 Issue](../../issues)
 - 如本项目中存在侵犯 Bilibili 公司合法权益的内容，需下线本项目，请联系我或者提交 Issue。
-- 邮箱：41470775+Oecxuan@users.noreply.github.com
 
 ## Star History
 

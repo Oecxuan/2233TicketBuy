@@ -263,7 +263,7 @@ class TicketGrabber:
                 hours = int(remaining // 3600)
                 minutes = int((remaining % 3600) // 60)
                 logger.time(f"倒计时: {hours}小时{minutes}分钟")
-                time.sleep(300)
+                time.sleep(60)
             elif remaining > 5:
                 logger.time(f"倒计时: {int(remaining)}秒")
                 time.sleep(1)

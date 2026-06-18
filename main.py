@@ -536,6 +536,13 @@ def confirm_and_grab(config, api, viewers=None):
         print(f"数量: {config.event.count}")
         print(f"总价: ¥{sku_price * config.event.count}")
         
+        # VIP 状态
+        try:
+            user_info = api.get_user_info()
+            is_vip = "是" if user_info.get("vipStatus") == 1 else "否"
+            print(f"大会员: {is_vip}")
+        except:
+            pass
         if viewers:
             print(f"观演人: {', '.join([v.get('name', '未知') for v in viewers if isinstance(v, dict)])}")
         

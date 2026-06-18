@@ -239,12 +239,12 @@ class TicketGrabber:
         advance_seconds = advance_ms / 1000
         target_time = sale_begin - advance_seconds
         
-        # 同步服务器时间，计算本地偏移
+        # 同步服务器时间，计算本地偏移并修正
         server_now = self.api.get_server_time()
         local_now = time.time()
         time_offset = server_now - local_now
         logger.time(f"服务器时间同步: 偏移 {time_offset:+.2f}s")
-        target_time += time_offset  # 用服务器时间修正
+        target_time -= time_offset  # 用服务器时间修正：服务器快则本地提前开始
         
         logger.info("等待开售...")
         logger.time(f"开售时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(sale_begin))}")
@@ -709,6 +709,16 @@ class TicketGrabber:
             logger.error("未登录或登录已过期")
             return TicketResult(success=False, message="未登录")
         logger.info("登录状态正常")
+        
+        # 大会员检测
+        try:
+            user_info = self.api.get_user_info()
+            is_vip = user_info.get("vipStatus") == 1
+            logger.info(f"大会员: {'是' if is_vip else '否'}")
+            if not is_vip:
+                logger.warning("非大会员，若项目有VIP提前购将无法参与")
+        except:
+            pass
         
         # 2. 获取项目/场次信息
         try:

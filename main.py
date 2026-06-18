@@ -241,17 +241,32 @@ def select_event(config, api):
             else:
                 print("状态: 已开售")
         
-        # 显示场次列表
+        # 显示场次列表（过滤 sale_flag_number=5 不可售，匹配 App 行为）
         print("\n可用场次:")
-        for i, screen in enumerate(project.screens, 1):
-            print(f"  {i}. {screen.get('name', '未知')}")
+        SALE_FLAG_MAP = {1:"未开售", 2:"售卖中", 3:"已停售", 4:"已售罄", 5:"不可售", 6:"库存紧张", 8:"暂时售罄", 9:"无购买资格"}
+        available_screens = [
+            s for s in project.screens 
+            if s.get('sale_flag_number', 2) != 5  # 排除不可售
+        ]
+        for i, screen in enumerate(available_screens, 1):
+            name = screen.get('name', '未知')
+            flag = screen.get('sale_flag_number', 0)
+            status = SALE_FLAG_MAP.get(flag, "")
+            line = f"  {i}. {name}"
+            if status:
+                line += f" [{status}]"
+            print(line)
+        
+        if not available_screens:
+            print("  ⚠️ 暂无可选场次")
+            return config, []
         
         # 选择场次
         while True:
             try:
                 screen_index = int(input("\n请选择场次（输入序号）: ")) - 1
-                if 0 <= screen_index < len(project.screens):
-                    screen = project.screens[screen_index]
+                if 0 <= screen_index < len(available_screens):
+                    screen = available_screens[screen_index]
                     break
                 else:
                     print("序号超出范围")
@@ -539,8 +554,10 @@ def confirm_and_grab(config, api, viewers=None):
         # VIP 状态
         try:
             user_info = api.get_user_info()
-            is_vip = "是" if user_info.get("vipStatus") == 1 else "否"
-            print(f"大会员: {is_vip}")
+            is_vip = user_info.get("vipStatus") == 1
+            print(f"大会员: {'是' if is_vip else '否'}")
+            if not is_vip:
+                console.print("[yellow]  注意：非大会员，若本项目有VIP提前购将无法参与[/yellow]")
         except:
             pass
         if viewers:

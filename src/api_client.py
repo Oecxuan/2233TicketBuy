@@ -689,15 +689,17 @@ class BilibiliAPI:
         return result["data"]
 
     def get_server_time(self) -> float:
-        """获取 B站服务器时间（用于精确同步）"""
+        """获取 show.bilibili.com 服务器时间（通过 HTTP Date 头，用于精确同步）"""
         try:
             client = self._get_client()
-            resp = client.get("https://api.bilibili.com/x/report/click/now")
-            data = resp.json()
-            ts = data.get("data", {}).get("now", 0)
-            if ts and ts > 1000000000:
+            resp = client.head("https://show.bilibili.com")
+            date_str = resp.headers.get("Date", "")
+            if date_str:
+                from email.utils import parsedate_to_datetime
+                server_dt = parsedate_to_datetime(date_str)
+                ts = server_dt.timestamp()
                 offset = ts - time.time()
-                logger.debug(f"服务器时间: {ts}, 本地偏移: {offset:+.2f}s")
+                logger.debug(f"服务器时间(Date头): {date_str}, 本地偏移: {offset:+.2f}s")
                 return ts
         except Exception as e:
             logger.debug(f"获取服务器时间失败: {e}")

@@ -107,14 +107,20 @@ class Cp2312Generator:
         return result
     
     def init_ctoken_state(self) -> Dict[str, int]:
-        """
-        初始化 ctoken 状态
-        
-        根据浏览器环境参数生成14个初始状态值
-        
-        Returns:
-            包含14个状态参数的字典
-        """
+        """初始化 ctoken 状态，每次生成时随机浏览器窗口参数"""
+        # 手机屏幕尺寸（与 screenInfo 362*795*24 和 Android UA 保持一致）
+        env = BrowserEnvironment(
+            screen_width=362,
+            screen_height=795,
+            inner_width=362,
+            inner_height=747,  # 795 - 48 (状态栏+导航栏)
+            outer_width=362,
+            outer_height=795,
+            scroll_x=random.randint(0, 50),
+            scroll_y=random.randint(0, 200),
+            screen_avail_width=362,
+        )
+        self.env = env
         self.state = {
             "m1": self.derive_d(0),
             "touchend": self.derive_d(1),
@@ -130,6 +136,7 @@ class Cp2312Generator:
             "m7": self.derive_d(9),
             "m8": self.derive_d(10),
             "m9": self.derive_d(11),
+            "ticket_collection_t": 0,
         }
         return self.state
     
@@ -156,6 +163,7 @@ class Cp2312Generator:
         
         self.state["timer"] += timer_increment
         self.state["timediff"] = round(timediff, 1)
+        self.state["ticket_collection_t"] = ticket_collection_time_ms // 1000 & 0xFFFF
         
         return self.state
     
@@ -319,10 +327,10 @@ class Cp2312Generator:
 
 
 def create_generator(
-    screen_width: int = 1920,
-    screen_height: int = 1080,
-    inner_width: int = 1280,
-    inner_height: int = 720,
+    screen_width: int = 362,
+    screen_height: int = 795,
+    inner_width: int = 362,
+    inner_height: int = 747,
 ) -> Cp2312Generator:
     """
     创建cp2312生成器的便捷函数

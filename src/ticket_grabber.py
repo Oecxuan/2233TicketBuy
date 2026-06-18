@@ -18,6 +18,7 @@ from enum import Enum
 from .config import Config
 from .api_client import BilibiliAPI, create_api_client
 from .gaia import GaiaVerifier, create_gaia_verifier
+from .captcha import GeetestHandler
 from .logger import logger
 
 
@@ -348,8 +349,6 @@ class TicketGrabber:
             gt = gt_data.get("gt", "")
             challenge = gt_data.get("challenge", "")
             logger.info(f"gaia 极验: {gt[:10]}...")
-            
-            from .captcha import GeetestHandler
             try:
                 handler = GeetestHandler(self.api.cookies)
                 captcha_result = handler.handle_captcha(
@@ -566,7 +565,6 @@ class TicketGrabber:
             logger.warning("触发验证码 (100044)")
             # 尝试用 GeetestHandler 自动解决
             try:
-                from .captcha import GeetestHandler
                 data = (result.raw_data or {}).get("data", {})
                 vv = data.get("v_voucher") or data.get("ga_data", {}).get("riskParams", {}).get("v_voucher", "")
                 if vv:

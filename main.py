@@ -36,7 +36,6 @@ from src.config import ConfigManager, Config
 from src.qrcode_login import login_interactive
 from src.api_client import create_api_client
 from src.ticket_grabber import TicketGrabber, grab_ticket_interactive
-from src.monitor import TicketMonitor
 
 
 def print_banner():

@@ -210,17 +210,47 @@ class BilibiliAPI:
 
     def _init_fingerprint(self) -> None:
         """初始化设备指纹体系"""
-        self.buvid3 = self._gen_buvid3()
-        self.buvid4 = self._gen_buvid4()
-        self.buvid_fp = self._gen_hex(37)  # buvid_fp 格式: 37位hex
-        self._uuid = self._gen_uuid_infoc()
         self.mobile_ua = self._gen_ua()
+        self._fetch_buvid_from_spi()
+        self._uuid = self._gen_uuid_infoc()
 
-        # 每次请求更新的动态指纹
+        # 会话级静态指纹（对齐 BHYG：init 时生成一次，会话内不变）
         self._refresh_fingerprints()
 
+    def _fetch_buvid_from_spi(self) -> None:
+        """从 B站 SPi 指纹服务获取真实 buvid3/4（对齐 BHYG），失败时本地生成"""
+        import hashlib
+
+        # 本地计算 buvid_fp（含校验码，对齐 BHYG）
+        random_md5 = hashlib.md5(str(random.random()).encode()).hexdigest()
+        fp_raw = random_md5 + time.strftime("%Y%m%d%H%M%S", time.localtime()) + self._gen_hex(16)
+        fp_sub = [fp_raw[i:i+2] for i in range(0, len(fp_raw), 2)]
+        veri = 0
+        for i in range(0, len(fp_sub), 2):
+            veri += int(fp_sub[i], 16)
+        self.buvid_fp = f"{fp_raw}{hex(veri % 256)[2:]}"
+
+        try:
+            client = httpx.Client(timeout=5, http2=True)
+            resp = client.get(
+                "https://api.bilibili.com/x/frontend/finger/spi",
+                headers={"User-Agent": self.mobile_ua},
+            )
+            data = resp.json()
+            if data.get("code") == 0:
+                self.buvid3 = data["data"].get("b_3", "")
+                self.buvid4 = data["data"].get("b_4", "")
+                logger.debug(f"SPi buvid 获取成功")
+                return
+        except Exception as e:
+            logger.debug(f"SPi 获取失败，回退本地生成: {e}")
+
+        # Fallback: 本地生成
+        self.buvid3 = self._gen_buvid3()
+        self.buvid4 = self._gen_buvid4()
+
     def _refresh_fingerprints(self) -> None:
-        """刷新每次请求需更新的指纹"""
+        """生成会话级静态指纹（init 时调用一次，不在每次请求时刷新）"""
         self.canvas_fp = self._gen_hex(32)
         self.webgl_fp = self._gen_hex(32)
         self.fe_sign = self._gen_hex(32)
@@ -262,7 +292,6 @@ class BilibiliAPI:
             "webglFp": self.webgl_fp,
             "feSign": self.fe_sign,
         })
-        self._refresh_fingerprints()
 
     def _build_identify(self) -> str:
         """构建复杂 identify 字符串（对标 BHYG _app_sign + _gen_risk_header）"""

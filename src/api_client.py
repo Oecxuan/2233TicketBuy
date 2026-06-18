@@ -473,7 +473,7 @@ class BilibiliAPI:
         # prepare 用原始 API buyer_info 值（BHYG 就是这样做的）
         buyer_info_data = buyer_info if buyer_info else ""
         
-        # 生成 ctoken（参考 BHYG hotProject 处理）
+        # 生成 ctoken（prepare 接口用，参考 BHYG）
         ctoken = ""
         try:
             from .cp2312 import get_ctoken
@@ -638,7 +638,7 @@ class BilibiliAPI:
         
         # 🔑 BHYG hot 项目专项处理
         if is_hot:
-            # 生成 ctoken（参考 BHYG do_order_create）
+            # 生成 ctoken（hot 项目 createV2 用，区别于 prepare 的 ctoken）
             ctoken = ""
             try:
                 from .cp2312 import get_ctoken

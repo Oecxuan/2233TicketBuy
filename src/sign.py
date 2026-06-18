@@ -17,7 +17,7 @@ class SignGenerator:
     功能：
     - 生成 x-bili-sign 签名
     - 生成 risk_params
-    - 生成 ptoken
+    - x-bili-ptoken 签名头
     """
     
     # 默认密钥（可能需要更新）
@@ -113,7 +113,7 @@ class SignGenerator:
         timestamp: Optional[int] = None,
     ) -> str:
         """
-        生成 ptoken
+        生成 x-bili-ptoken 签名头（下单用的 ptoken 来自 B站 prepare API，不在此处理）
         
         Args:
             mid: 用户ID
@@ -171,7 +171,7 @@ class SignGenerator:
         # 生成签名
         sign = self.generate_x_bili_sign(method, url, timestamp, data)
         
-        # 生成ptoken
+        # 生成 x-bili-ptoken 签名头
         mid = cookie.get("DedeUserID", "")
         ptoken = self.generate_ptoken(mid, timestamp)
         

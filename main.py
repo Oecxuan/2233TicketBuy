@@ -36,12 +36,13 @@ from src.config import ConfigManager, Config
 from src.qrcode_login import login_interactive
 from src.api_client import create_api_client
 from src.ticket_grabber import TicketGrabber, grab_ticket_interactive
+from src import __version__
 
 
 def print_banner():
     console.print()
     console.print(Panel.fit(
-        "[bold cyan]2233TicketBuy[/bold cyan] [dim]— B站会员购抢票工具[/dim]",
+        f"[bold cyan]2233TicketBuy[/bold cyan] [dim]v{__version__}[/dim] [dim]— B站会员购抢票工具[/dim]",
         border_style="cyan",
         subtitle="[dim]纯本地运行 · 仅供学习研究[/dim]"
     ))

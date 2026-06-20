@@ -87,6 +87,7 @@ class TicketGrabber:
         self._is_hot = getattr(config.event, 'hot_project', False)
         self._delta = getattr(config.strategy, 'delta', 0.05)
         self._raw_stock_status = 0  # 原始 stockStatus
+        self._congestion_count = 0  # 拥堵错误计数
         
         # 智能间隔（对齐 BHYG last_order_time / last_order_check_time）
         self.last_order_time = 0
@@ -567,7 +568,8 @@ class TicketGrabber:
         
         # === 429 限流（BHYG 风格：仅日志，不计数） ===
         if errno == 429:
-            logger.warning(f"第{self._attempt_count}次 | 429 限流，继续重试")
+            logger.warning(f"第{self._attempt_count}次 | 429 请求过快，稍后重试")
+            self._congestion_count = getattr(self, '_congestion_count', 0) + 1
             return True
         
         # 非 412 错误，重置 412 计数
@@ -576,6 +578,8 @@ class TicketGrabber:
         
         # === 库存相关（继续监控） ===
         if errno in (10007, 100001, 100009, 900001, 900002, 219):
+            if errno in (-999, -998, -997, -504, -503, -502, -429, 100001, 900001):
+                self._congestion_count = getattr(self, '_congestion_count', 0) + 1
             return True
         
         # === 未开售 ===
@@ -645,8 +649,12 @@ class TicketGrabber:
             if "限购" in message:
                 return False
         
-        # 其他错误：默认继续重试
+        # 未识别错误：兜底重试
         logger.debug(f"未识别的错误，继续重试: {message}")
+        if errno in (-999, -998, -997, -504, -503, -502, -429, 100001, 900001):
+            self._congestion_count = getattr(self, '_congestion_count', 0) + 1
+        else:
+            self._congestion_count = 0
         return True
     
     def grab_ticket(self) -> TicketResult:
@@ -759,6 +767,12 @@ class TicketGrabber:
                 sleep_time = (self.last_order_check_time + 1 - self._delta) - now
             else:
                 sleep_time = self.grab_interval
+            
+            # 持续拥堵：随机变速 0.3~1s，模拟真实用户
+            _cc = getattr(self, '_congestion_count', 0)
+            if _cc >= 3:
+                sleep_time = random.uniform(0.3, 1.0)
+            
             time.sleep(sleep_time)
         
         return TicketResult(

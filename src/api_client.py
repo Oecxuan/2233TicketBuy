@@ -670,9 +670,21 @@ class BilibiliAPI:
             client = self._get_client()
             response = client.post(request_url, json=order_data, headers=headers, cookies=self.cookies)
             result = response.json()
+        except json.JSONDecodeError as e:
+            # 返回非 JSON（空响应/HTML 错误页）
+            status = response.status_code if 'response' in dir() else 0
+            errno_map = {429: -429, 502: -502, 503: -503, 504: -504}
+            code = errno_map.get(status, -999)
+            logger.warning(f"create_order 非JSON响应: HTTP {status}, code={code}")
+            return {"errno": code, "msg": f"HTTP {status}: {e}", "data": {}}, token, ptoken_clean
+        except httpx.TimeoutException:
+            logger.warning(f"create_order 超时")
+            return {"errno": -998, "msg": "请求超时", "data": {}}, token, ptoken_clean
+        except httpx.NetworkError as e:
+            logger.warning(f"create_order 网络错误: {e}")
+            return {"errno": -997, "msg": str(e), "data": {}}, token, ptoken_clean
         except Exception as e:
             logger.warning(f"create_order 网络异常: {e}")
-            # 网络异常也返回 token，让调用方缓存
             return {"errno": -999, "msg": str(e), "data": {}}, token, ptoken_clean
         
         errno = result.get("errno", result.get("code", -1))

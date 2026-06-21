@@ -86,7 +86,10 @@ class BilibiliAPI:
         
         # ========== 设备指纹系统（对齐 BHYG） ==========
         self._init_fingerprint()
-        
+        # Token 缓存（对齐 BHYG get_token 逻辑）
+        self._token = None
+        self._ptoken = None
+        self._token_exp = 0  # 过期时间戳
         # 构建Cookie（对齐 BHYG show.bilibili.com 专属 cookie）
         self.cookies = {
             "SESSDATA": config.user.sessdata,
@@ -496,6 +499,7 @@ class BilibiliAPI:
             "sku_id": sku_id,
             "buyer_info": buyer_info_data,
             "ignoreRequestLimit": True,
+            "token": "",
             "ticket_agent": "",
             "newRisk": True,
             "requestSource": "neul-next",
@@ -505,6 +509,7 @@ class BilibiliAPI:
 
         # BHYG 风格：while True 重试直到成功
         while True:
+            random.seed(int(time.time() * 1000))
             body_data = json.dumps(data)
             headers = self._get_headers("POST", url, body_data)
             try:
@@ -537,6 +542,20 @@ class BilibiliAPI:
             logger.warning(f"prepare_token 失败 (errno={errno}): {result.get('msg', result.get('message', ''))}")
             time.sleep(1)
 
+    def _get_token(self, project_id: int, screen_id: int, sku_id: int, count: int,
+                   buyer_info=None, id_bind: int = 0, viewers: list = None, is_hot: bool = False):
+        """获取 token（BHYG 风格：缓存有效则复用，过期则重新 prepare）"""
+        if self._token and self._ptoken and time.time() < self._token_exp - 60:
+            return self._token, self._ptoken
+        
+        prepare_data = self.prepare_token(project_id, screen_id, sku_id, count,
+                                          buyer_info=buyer_info, id_bind=id_bind,
+                                          viewers=viewers, is_hot=is_hot)
+        self._token = prepare_data.get("token", "") or ""
+        self._ptoken = prepare_data.get("ptoken", "") or ""
+        self._token_exp = time.time() + 300  # 5分钟有效期
+        return self._token, self._ptoken
+    
     def create_order(
         self,
         project_id: int,
@@ -551,28 +570,23 @@ class BilibiliAPI:
         cached_ptoken: str = "",
         is_hot: bool = False,
         cached_pay_money: int = 0,
-        id_bind: int = 0,
-        buyer_info: str = "",
     ) -> tuple:
         """创建订单（BHYG do_order_create 风格）"""
         url = f"{self.BASE_URL}/ticket/order/createV2?project_id={project_id}"
-        # 获取 token
-        if cached_token:
-            token = cached_token
-            ptoken = cached_ptoken
-        else:
-            logger.info(f"准备token: project={project_id}, screen={screen_id}, sku={sku_id}, count={count}")
-            prepare_data = self.prepare_token(project_id, screen_id, sku_id, count,
-                                               buyer_info=buyer_info, id_bind=id_bind,
-                                               viewers=viewers, is_hot=is_hot)
-            token = prepare_data.get("token", "") or ""
-            ptoken = prepare_data.get("ptoken", "") or ""
-
+        
+        # v7.0.0: 每次从 get_project_info 获取最新的 id_bind 和 buyer_info
+        project = self.get_project_info(project_id)
+        id_bind = project.id_bind
+        buyer_info = project.buyer_info
+        
+        # 获取 token（BHYG 风格：缓存复用，过期重新 prepare）
+        token, ptoken = self._get_token(project_id, screen_id, sku_id, count,
+                                         buyer_info=buyer_info, id_bind=id_bind,
+                                         viewers=viewers, is_hot=is_hot)
+        
         ptoken_clean = ptoken.replace("=", "") if ptoken else ""
         
         # BHYG: prepare 和 create 之间无延迟
-        
-        # 获取价格（优先使用缓存价格，BHYG: 100034 自动更新）
         pay_money = cached_pay_money if cached_pay_money else 0
         
         # 构建订单数据（严格对齐 BHYG do_order_create 格式）
@@ -596,9 +610,8 @@ class BilibiliAPI:
             } if id_bind == 0 else None,
             "sku_id": sku_id,
             "coupon_code": "",
-            "again": 0,
+            "again": 1,
             "token": token,
-            "ptoken": ptoken_clean,
             "deviceId": self.device_id,
             "version": "1.1.0",
         }
@@ -652,7 +665,7 @@ class BilibiliAPI:
             _safe = {k: v for k, v in order_data.items() if k not in ("csrf", "buyer", "tel", "contactInfo")}
             logger.hot(f"create_order 请求: url={url}, payload={json.dumps(_safe, ensure_ascii=False)[:800]}")
         else:
-            order_data["ptoken"] = ptoken_clean
+            pass  # 非 hot 项目：ptoken 不在 body 也不在 URL，对齐 BHYG
         
         # 直接发 HTTP 请求，不使用 _request()
         body_data = json.dumps(order_data)

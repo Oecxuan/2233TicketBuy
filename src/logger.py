@@ -77,7 +77,7 @@ class Logger:
             show_path=False,
             rich_tracebacks=True,
         )
-        console_handler.setLevel(logging.INFO)
+        console_handler.setLevel(logging.DEBUG)
         console_format = logging.Formatter('%(message)s')
         console_handler.setFormatter(console_format)
         self.logger.addHandler(console_handler)

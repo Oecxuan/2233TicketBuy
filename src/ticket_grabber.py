@@ -88,7 +88,8 @@ class TicketGrabber:
         self._is_hot = getattr(config.event, 'hot_project', False)
         self._delta = getattr(config.strategy, 'delta', 0.05)
         self._raw_stock_status = 0  # 原始 stockStatus
-        self._congestion_count = 0  # 拥堵错误计数
+        self._congestion_count = 0  # 拥堵错误计数（每轮重置）
+        self._consecutive_congestion = 0  # 连续拥堵计数（跨轮累积，非拥堵错误才重置）
         
         # 智能间隔（对齐 BHYG last_order_time / last_order_check_time）
         self.last_order_time = 0
@@ -220,20 +221,7 @@ class TicketGrabber:
             
         except Exception as e:
             logger.debug(f"检查票量失败: {e}")
-            # 回退：通过 get_screen_info 检查
-            try:
-                screen = self.api.get_screen_info(
-                    self.config.event.project_id,
-                    self.config.event.screen_id,
-                )
-                for sku in screen.skus:
-                    if sku["id"] == self.config.event.sku_id:
-                        stock = sku.get("stock", {})
-                        count = stock.get("count", -1) if isinstance(stock, dict) else -1
-                        return count > 0 or count == -1  # -1 表示未知，保守认为有票
-                return False
-            except:
-                return False
+            return False
     
     def wait_for_start(self, sale_begin: int) -> None:
         """
@@ -487,7 +475,7 @@ class TicketGrabber:
                 timestamp=time.time(),
             )
     
-    def _handle_grab_result(self, result: TicketResult) -> bool:
+    def _handle_grab_result(self, result: TicketResult, lightning: bool = False) -> bool:
         """处理抢票结果（BHYG 错误码策略）"""
         if result.success:
             self.result = result
@@ -536,13 +524,17 @@ class TicketGrabber:
             logger.error("缺少联系人信息 (209001)")
             return False
         
+        # ⚡ 闪电模式：除了 412，所有错误硬打不降速
+        if lightning and errno not in (-412, 412):
+            return True
+        
         # === 限流/风控 ===
         if errno == 1:
             # "请慢一点" → 已在 _try_create_order 中等待5秒，这里限制膨胀
             self.grab_interval = min(self.grab_interval * 2, 1.0)
             return True
         
-        # === 412 限流（BHYG 风格：计数+冷却） ===
+        # === 412 限流（真降速：每次等2s，设间隔防连击） ===
         if errno in (-412, 412):
             self._412_count += 1
             logger.warning(f"第{self._attempt_count}次 | 412 限流 (x{self._412_count})")
@@ -550,13 +542,15 @@ class TicketGrabber:
                 logger.warning(f"412 次数过多({self._412_count})，等待 300s...")
                 time.sleep(300)
                 self._412_count = 0
-            time.sleep(1)
+            time.sleep(2)
+            self.last_order_check_time = time.time()
             return True
         
-        # === 429 限流（拥堵计数，连续触发降速） ===
+        # === 429 限流（BHYG: 不单独sleep，靠循环间隔） ===
         if errno == 429:
             logger.warning(f"第{self._attempt_count}次 | 429 请求过快，稍后重试")
             self._congestion_count = getattr(self, '_congestion_count', 0) + 1
+            self._consecutive_congestion = getattr(self, '_consecutive_congestion', 0) + 1
             return True
         
         # 非 412 错误，重置 412 计数
@@ -567,6 +561,12 @@ class TicketGrabber:
         if errno in (10007, 100001, 100009, 900001, 900002, 219):
             if errno in (100001, 900001):
                 self._congestion_count = getattr(self, '_congestion_count', 0) + 1
+                self._consecutive_congestion = getattr(self, '_consecutive_congestion', 0) + 1
+            else:
+                # 100009/10007 说明是真库存，重置连续拥堵计数
+                self._consecutive_congestion = 0
+            if errno == 100001:  # 仅 100001 设智能间隔，100009 硬打（真库存闪现）
+                self.last_order_check_time = time.time()
             return True
         
         # === 未开售 ===
@@ -664,17 +664,17 @@ class TicketGrabber:
         
         attempt = 0
         enable_stock_check = getattr(self.config.strategy, 'enable_stock_check', True)
-        stock_check_count = 0  # BHYG: 控制库存检查频率
-        _no_stock_count = 0    # 无库存连续计数，用于周期性输出
+        stock_check_count = 0  # BHYG: 控制库存检查频率（仅蹲票模式）
+        _no_stock_count = 0    # 无库存连续计数
+        sale_start_time = time.time()  # 用于区分闪电/蹲票阶段
         
         while not self._stop_event.is_set():
             attempt += 1
+            lightning = (time.time() - sale_start_time) < 60  # 开售 60s 内闪电模式
             
-            # BHYG 风格：stock_check_count 控制库存检查频率
-            # 无库存时每次查（continues 跳过累加，stock_check_count 始终为0）
-            # 有库存后连续30次下单不查库存，30次后重置再查
-            if stock_check_count == 0 and enable_stock_check:
-                if not self.check_ticket_stock():
+            # ⚡ 闪电模式：每次循环查库存
+            if lightning:
+                if enable_stock_check and not self.check_ticket_stock():
                     _no_stock_count += 1
                     if _no_stock_count % 100 == 1:
                         logger.info(f"无库存，持续检查中... (第{attempt}次, stockStatus={self._raw_stock_status})")
@@ -682,14 +682,25 @@ class TicketGrabber:
                 if _no_stock_count > 0:
                     logger.info(f"库存恢复 (第{attempt}次, 此前无库存{_no_stock_count}次)")
                     _no_stock_count = 0
-                stock_check_count += 1
-                time.sleep(getattr(self.config.strategy, 'stock_check_available_delay', 0))
-            
-            if enable_stock_check:
-                stock_check_count += 1
-            
-            if stock_check_count % 30 == 0:
-                stock_check_count = 0
+            else:
+                # 蹲票模式：BHYG 风格 stock_check_count 控制库存检查频率
+                if stock_check_count == 0 and enable_stock_check:
+                    if not self.check_ticket_stock():
+                        _no_stock_count += 1
+                        if _no_stock_count % 100 == 1:
+                            logger.info(f"无库存，持续检查中... (第{attempt}次, stockStatus={self._raw_stock_status})")
+                        continue
+                    if _no_stock_count > 0:
+                        logger.info(f"库存恢复 (第{attempt}次, 此前无库存{_no_stock_count}次)")
+                        _no_stock_count = 0
+                    stock_check_count += 1
+                    time.sleep(getattr(self.config.strategy, 'stock_check_available_delay', 0))
+                
+                if enable_stock_check:
+                    stock_check_count += 1
+                
+                if stock_check_count % 30 == 0:
+                    stock_check_count = 0
             
             # 抢票模式
             t_start = time.time()
@@ -708,7 +719,7 @@ class TicketGrabber:
             
             # 处理失败结果
             self._attempt_count = attempt
-            should_continue = self._handle_grab_result(result)
+            should_continue = self._handle_grab_result(result, lightning=lightning)
             if not should_continue:
                 break
             
@@ -719,20 +730,23 @@ class TicketGrabber:
                 logger.info(f"第{attempt}次 | {hid} | {self.config.event.project_id}")
             
             # 智能等待（三重判断，delta 可配）
-            now = time.time()
-            if (self.last_order_time + 5 - self._delta) - now > 0:
-                sleep_time = (self.last_order_time + 5 - self._delta) - now
-            elif (self.last_order_check_time + 1 - self._delta) - now > 0:
-                sleep_time = (self.last_order_check_time + 1 - self._delta) - now
-            else:
+            if lightning:
+                # ⚡ 闪电模式：纯 grab_interval，不设智能间隔
                 sleep_time = self.grab_interval
-            
-            # 持续拥堵：阶梯变速，模拟人手点击节奏（最高0.8s）
-            _cc = getattr(self, '_congestion_count', 0)
-            if _cc > 0:
-                sleep_time = random.uniform(0.3, 0.8)
-            if _cc >= 3:
-                sleep_time = random.uniform(0.5, 0.8)
+            else:
+                now = time.time()
+                if (self.last_order_time + 5 - self._delta) - now > 0:
+                    sleep_time = (self.last_order_time + 5 - self._delta) - now
+                elif (self.last_order_check_time + 1 - self._delta) - now > 0:
+                    sleep_time = (self.last_order_check_time + 1 - self._delta) - now
+                else:
+                    sleep_time = self.grab_interval
+                
+                # 持续拥堵≥5次时强制重新查库存，避免假库存浪费30次下单窗口
+                _cc = getattr(self, '_consecutive_congestion', 0)
+                if _cc >= 5:
+                    stock_check_count = 29  # 下一轮 % 30 == 0 即重置
+                    self._consecutive_congestion = 0
             
             time.sleep(sleep_time)
             self._congestion_count = 0  # 间隔后重新计数拥堵

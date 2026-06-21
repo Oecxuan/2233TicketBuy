@@ -14,7 +14,6 @@ from dataclasses import dataclass
 
 from .cp2312 import Cp2312Generator, create_generator
 from .config import Config
-from .sign import SignGenerator, get_sign_generator
 from .wbi import WbiSigner, get_wbi_signer, fetch_wbi_keys
 from .error_recovery import safe_request, ErrorRecovery, get_error_recovery, NetworkError, APIError
 from .logger import logger
@@ -79,7 +78,6 @@ class BilibiliAPI:
         """
         self.config = config
         self.cp2312 = cp2312_generator or create_generator()
-        self.sign_generator = get_sign_generator()
         self.wbi_signer = get_wbi_signer()
         self.error_recovery = get_error_recovery()
         
@@ -303,6 +301,12 @@ class BilibiliAPI:
         if self._client is not None:
             self._client.close()
             self._client = None
+
+    def reset_client(self) -> None:
+        """重置 HTTP 客户端（连接池+SSL+HTTP/2 stream 全部重建，用于清除服务端限流状态）"""
+        self.close()
+        self._get_client()  # 立即重建
+        logger.info("HTTP 客户端已重建（重置连接池与 SSL 会话）")
     
     def _get_headers(
         self,
@@ -311,17 +315,17 @@ class BilibiliAPI:
         data: Optional[str] = None,
         extra_headers: Optional[Dict] = None,
     ) -> Dict:
-        """构建请求头"""
-        headers = self.sign_generator.get_signed_headers(
-            method=method,
-            url=url,
-            cookie=self.cookies,
-            data=data,
-            extra_headers=extra_headers,
-        )
-        # 覆盖 sign.py 的 PC UA 为动态 Android UA
-        headers["User-Agent"] = self.mobile_ua
-        headers["env"] = "prod"
+        """构建请求头（对齐 BHYG/BTB：纯 Cookie 认证，无签名头）"""
+        headers = {
+            "User-Agent": self.mobile_ua,
+            "Referer": "https://show.bilibili.com/",
+            "Origin": "https://show.bilibili.com",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "env": "prod",
+        }
+        if extra_headers:
+            headers.update(extra_headers)
         return headers
     
     def _check_response(self, result: Dict) -> None:
@@ -664,8 +668,11 @@ class BilibiliAPI:
             response = client.post(request_url, json=order_data, headers=headers, cookies=self.cookies)
             result = response.json()
         except json.JSONDecodeError as e:
-            logger.warning(f"create_order 非JSON响应: HTTP {response.status_code}")
-            return {"errno": -1, "msg": f"HTTP {response.status_code}", "data": {}}, token, ptoken_clean
+            # HTTP 429/412 等非 JSON 响应：映射为对应 errno
+            http_errno_map = {429: 429, 412: 412}
+            mapped = http_errno_map.get(response.status_code, -1)
+            logger.warning(f"create_order 非JSON响应: HTTP {response.status_code} → errno={mapped}")
+            return {"errno": mapped, "msg": f"HTTP {response.status_code}", "data": {}}, token, ptoken_clean
         except httpx.TimeoutException:
             logger.warning(f"create_order 超时")
             return {"errno": -1, "msg": "请求超时", "data": {}}, token, ptoken_clean

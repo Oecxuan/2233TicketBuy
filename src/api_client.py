@@ -231,9 +231,6 @@ class BilibiliAPI:
                     "sec-fetch-dest": "empty",
                     "sec-fetch-mode": "cors",
                     "sec-fetch-site": "same-origin",
-                    "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not/A)Brand";v="8"',
-                    "sec-ch-ua-mobile": "?0",
-                    "sec-ch-ua-platform": '"Windows"',
                 },
             )
             data = resp.json()
@@ -275,7 +272,9 @@ class BilibiliAPI:
     def _on_request(self, request: httpx.Request) -> None:
         """Request hook (BTB-style): no Android fingerprint cookies."""
         logger.debug(f"REQ HEADERS: {dict(request.headers)}")
-        logger.debug(f"REQ COOKIES ({len(self._client.cookies)}): {dict(self._client.cookies)}")
+        # 仅记录 cookie 数量，不打印值以防泄露 SESSDATA/bili_jct
+        cookie_names = [c.name for c in self._client.cookies.jar]
+        logger.debug(f"REQ COOKIES ({len(cookie_names)}): {cookie_names}")
     
     def _build_identify(self) -> str:
         """构建复杂 identify 字符串（对标 BHYG _app_sign + _gen_risk_header）"""
@@ -348,7 +347,6 @@ class BilibiliAPI:
             self.save_session()
             self._client.close()
             self._client = None
-        self.load_session()
 
     def reset_client(self) -> None:
         """重置 HTTP 客户端（连接池+SSL+HTTP/2 stream 全部重建，用于清除服务端限流状态）"""
@@ -554,7 +552,6 @@ class BilibiliAPI:
 
         # BHYG 风格：while True 重试直到成功
         while True:
-            random.seed(int(time.time() * 1000))
             body_data = json.dumps(data)
             headers = self._get_headers("POST", url, body_data)
             try:
@@ -677,12 +674,11 @@ class BilibiliAPI:
         # origin 应比 now 早 10-20 秒（模拟用户浏览耗时）
         # 如果有 token_gen 则用作随机种子（BHYG 行为）
         cp_seed = self.cp2312.token_gen if hasattr(self.cp2312, 'token_gen') and self.cp2312.token_gen else None
-        if cp_seed:
-            random.seed(int(cp_seed))
-        click_origin = now_ms - random.randint(10000, 20000)
+        _rng = random.Random(cp_seed) if cp_seed else random.Random()
+        click_origin = now_ms - _rng.randint(10000, 20000)
         order_data["clickPosition"] = {
-            "x": random.randint(100, 500),
-            "y": random.randint(500, 900),
+            "x": _rng.randint(100, 500),
+            "y": _rng.randint(500, 900),
             "origin": click_origin,
             "now": now_ms,
         }

@@ -17,6 +17,7 @@ class UserConfig:
     bili_jct: str = ""
     dede_user_id: str = ""
     dede_user_id_ckmd5: str = ""
+    device_id: str = ""  # 持久化设备指纹（对齐 BHYG）
 
 
 @dataclass
@@ -153,6 +154,7 @@ class ConfigManager:
                 "bili_jct": config.user.bili_jct,
                 "dede_user_id": config.user.dede_user_id,
                 "dede_user_id_ckmd5": config.user.dede_user_id_ckmd5,
+                "device_id": config.user.device_id,
             },
             "event": {
                 "project_id": config.event.project_id,
@@ -160,6 +162,7 @@ class ConfigManager:
                 "sku_id": config.event.sku_id,
                 "count": config.event.count,
                 "viewer_id": config.event.viewer_id,
+                "hot_project": config.event.hot_project,
             },
             "strategy": {
                 "retry_count": config.strategy.retry_count,

@@ -85,7 +85,26 @@ class TicketGrabber:
         self._412_count = 0
         self._risk_cooldown = 60
         self._cached_pay_money = 0  # BHYG: 100034 自动更新价格
+        # BHYG 风格：优先使用已保存的 hot_project 配置，API 检测仅作补充
         self._is_hot = getattr(config.event, 'hot_project', False)
+        if not self._is_hot and config.event.project_id:
+            try:
+                project = self.api.get_project_info(config.event.project_id)
+                if project.hot_project:
+                    self._is_hot = True
+                    # 保存到 config 供后续使用（对齐 BHYG config 持久化）
+                    config.event.hot_project = True
+                    from .config import save_config
+                    try:
+                        save_config(config)
+                        logger.info("检测到热门项目，已保存到配置")
+                    except Exception:
+                        pass
+                    logger.info("检测到热门项目，启用 hot 模式")
+                else:
+                    logger.debug(f"API hotProject=False，使用配置值: {self._is_hot}")
+            except Exception as e:
+                logger.debug(f"hot detect skipped: {e}")
         self._delta = getattr(config.strategy, 'delta', 0.05)
         self._raw_stock_status = 0  # 原始 stockStatus
         self._congestion_count = 0  # 拥堵错误计数（每轮重置）
@@ -809,6 +828,9 @@ class TicketGrabber:
             sku_price = (selected_sku.get("price", 0) / 100) if selected_sku else 0
             count = self.config.event.count
             total_price = sku_price * count
+            # 初始化 pay_money（分），防止首次下单传 0
+            if not self._cached_pay_money and selected_sku:
+                self._cached_pay_money = selected_sku.get("price", 0)
             
             from datetime import datetime
             sale_time_str = ""

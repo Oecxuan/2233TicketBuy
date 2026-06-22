@@ -653,7 +653,10 @@ def main():
         console.print("  [cyan]3.[/cyan] [bold green]开始抢票[/bold green]")
         console.print("  [cyan]4.[/cyan] 查看配置")
         console.print("  [cyan]5.[/cyan] 参数微调")
-        console.print("  [cyan]6.[/cyan] 退出")
+        stock_enabled = getattr(config.strategy, 'enable_stock_check', True) if config else True
+        mode_text = "蹲票模式 (有票才打)" if stock_enabled else "硬打模式 (一直都打)"
+        console.print(f"  [cyan]6.[/cyan] 切换模式 : [bold]{mode_text}[/bold]")
+        console.print("  [cyan]0.[/cyan] 退出")
         console.print()
         
         choice = input("请选择操作: ").strip()
@@ -712,6 +715,14 @@ def main():
             _tweak_params(config, config_manager)
 
         elif choice == "6":
+            s = config.strategy
+            current = getattr(s, 'enable_stock_check', True)
+            s.enable_stock_check = not current
+            config_manager.save(config)
+            mode_text = "蹲票模式 (有票才打)" if s.enable_stock_check else "硬打模式 (一直都打)"
+            console.print(f"[green]已切换为: {mode_text}[/green]")
+
+        elif choice == "0":
             console.print("\n再见！")
             break
 

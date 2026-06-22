@@ -61,7 +61,7 @@ class Logger:
         
         # 创建logger
         self.logger = logging.getLogger(name)
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(logging.INFO)
         
         # 避免重复添加handler
         if not self.logger.handlers:
@@ -77,7 +77,7 @@ class Logger:
             show_path=False,
             rich_tracebacks=True,
         )
-        console_handler.setLevel(logging.DEBUG)
+        console_handler.setLevel(logging.INFO)
         console_format = logging.Formatter('%(message)s')
         console_handler.setFormatter(console_format)
         self.logger.addHandler(console_handler)
@@ -85,7 +85,7 @@ class Logger:
         # 文件处理器
         log_file = self.log_dir / f"{self.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)
+        file_handler.setLevel(logging.INFO)
         file_format = logging.Formatter(
             '%(asctime)s.%(msecs)03d | %(levelname)-7s | %(name)s | %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'

@@ -176,6 +176,7 @@ class ConfigManager:
                 "concurrency": config.strategy.concurrency,
                 "advance_ms": config.strategy.advance_ms,
                 "timeout_seconds": config.strategy.timeout_seconds,
+                "enable_stock_check": config.strategy.enable_stock_check,
             },
             "proxy": {
                 "enabled": config.proxy.enabled,
@@ -197,7 +198,19 @@ class ConfigManager:
         # 确保目录存在
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # 保存配置
+        # 保存配置：保留原文件的 cookies（用户手填），auth 字段正常更新
+        if self.config_path.exists():
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    old = yaml.safe_load(f) or {}
+                old_cookies = old.get("user", {}).get("cookies", {})
+                if old_cookies:
+                    # 只保留有值的 cookie，空的不覆盖
+                    data.setdefault("user", {})["cookies"] = {
+                        k: v for k, v in old_cookies.items() if v
+                    }
+            except Exception:
+                pass
         with open(self.config_path, "w", encoding="utf-8") as f:
             yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
     

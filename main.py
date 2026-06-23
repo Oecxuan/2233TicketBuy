@@ -5,10 +5,16 @@ import logging, os as _os, shutil as _shutil, sys as _sys, signal, threading
 
 # ====== Ctrl+C 信号处理（设标志位，不抛异常，避免 CFFI 弹窗）======
 _interrupt_event = threading.Event()
+_interrupt_count = 0
 
 def _on_interrupt(sig, frame):
+    global _interrupt_count
+    _interrupt_count += 1
+    if _interrupt_count >= 2:
+        print("\n\n强制退出")
+        _os._exit(0)
     _interrupt_event.set()
-    print("\n\n[!] 正在取消...")
+    print("\n\n[!] 按两次 Ctrl+C 强制退出...")
 
 signal.signal(signal.SIGINT, _on_interrupt)
 
@@ -715,7 +721,19 @@ def main():
                 config = login(config_manager)
                 continue
             
-            config, viewers = select_event(config, api)
+            _interrupt_count = 0
+            try:
+                config, viewers = select_event(config, api)
+            except KeyboardInterrupt:
+                console.print("\n[yellow]选择活动已取消，返回菜单[/yellow]")
+                _interrupt_event.clear()
+                _interrupt_count = 0
+                continue
+            if _interrupt_event.is_set():
+                console.print("\n[yellow]选择活动已取消，返回菜单[/yellow]")
+                _interrupt_event.clear()
+                _interrupt_count = 0
+                continue
             config_manager.save(config)
             print("\n配置已保存")
             
@@ -724,6 +742,12 @@ def main():
                 print("\n请先选择活动！")
                 continue
             
+            # 重新加载配置（允许用户手动编辑 config.yaml 后不重启）
+            try:
+                config = config_manager.load()
+            except Exception:
+                pass
+
             # 确保使用最新的配置创建 API 客户端
             api = create_api_client(config)
             if not api.check_login():
@@ -743,11 +767,12 @@ def main():
                     continue
             
             _interrupt_event.clear()
+            _interrupt_count = 0
             confirm_and_grab(config, api, viewers)
             if _interrupt_event.is_set():
-                console.print("\n[yellow]抢票已取消[/yellow]")
-                input("\n按回车键退出...")
-                break
+                console.print("\n[yellow]抢票已取消，返回菜单[/yellow]")
+                _interrupt_event.clear()
+                _interrupt_count = 0
             
         elif choice == "4":
             # 尝试创建 API 客户端以获取详细信息

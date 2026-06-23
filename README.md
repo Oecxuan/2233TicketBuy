@@ -15,6 +15,7 @@ B站会员购抢票工具，仅供学习参考和研究使用。
 
 - [biliTickerBuy](https://github.com/mikumifa/biliTickerBuy) 
 - [BHYG](https://github.com/ZianTT/BHYG) 
+- 本项目暂时没有找到能够自动完善所需cookies的办法，推荐使用上面两者。
 
 ## 功能
 
@@ -61,7 +62,7 @@ python main.py
 >     kfcTime: ""          # 选填
 >     bp_t_offset_0: ""    # 选填（0 替换为你的 UID）
 > ```
-> 获取方式：浏览器登录 B站 → F12 → Application → Cookies → `bilibili.com`，复制对应值。一次配置长期有效。普通项目无需此步骤。
+> 获取方式：浏览器登录 B站 → F12 → Application → Cookies → `show.bilibili.com`，复制对应值。一次配置长期有效。
 
 ## 命令行参数
 

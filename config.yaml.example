@@ -1,0 +1,60 @@
+# 2233TicketBuy 配置文件
+# 复制为 config.yaml 并填入你的信息
+
+user:
+  sessdata: ""           # B站 SESSDATA cookie
+  bili_jct: ""           # B站 bili_jct cookie  
+  dede_user_id: ""       # B站用户 UID
+  dede_user_id_ckmd5: "" # DedeUserID 的 MD5
+  device_id: ""          # 设备ID（留空自动生成）
+  cookies:               # 浏览器指纹 cookie（可选，缺失会自动生成）
+    # buvid3: ""
+    # buvid4: ""
+    # buvid_fp: ""
+    # deviceFingerprint: ""
+    # _uuid: ""
+    # b_nut: ""
+    # b_lsid: ""
+    # rpdid: ""
+    # LIVE_BUVID: ""
+    # PVID: ""
+    # kfcFrom: ""
+    # kfcSource: ""
+    # kfcTime: ""
+    # bp_t_offset_0: ""
+
+event:
+  project_id: 0          # 活动ID
+  screen_id: 0           # 场次ID
+  sku_id: 0              # 票档ID
+  count: 1               # 购票数量
+  viewer_id: 0           # 观演人ID
+  hot_project: false     # 是否热门项目
+  pay_money: 0           # 支付金额（分）
+  viewers: []            # 观演人列表（程序自动填充）
+
+strategy:
+  retry_count: 3         # 重试次数
+  retry_delay_ms: 100    # 重试间隔（毫秒）
+  concurrency: 1         # 并发数
+  advance_ms: 0          # 提前量（毫秒）
+  timeout_seconds: 10    # 超时（秒）
+  after_sale_begin_delay: 0.2
+  order_interval: 0.3
+  delta: 0.05
+  enable_stock_check: true
+
+proxy:
+  enabled: false
+  http: ""
+  https: ""
+  socks5: ""
+
+logging:
+  level: "INFO"
+  save_to_file: true
+  file_path: "logs/ticket_grabber.log"
+  verbose: false
+
+notification:
+  enabled: false

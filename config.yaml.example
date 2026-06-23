@@ -7,21 +7,21 @@ user:
   dede_user_id: ""       # B站用户 UID
   dede_user_id_ckmd5: "" # DedeUserID 的 MD5
   device_id: ""          # 设备ID（留空自动生成）
-  cookies:               # 浏览器指纹 cookie（可选，缺失会自动生成）
-    # buvid3: ""
-    # buvid4: ""
-    # buvid_fp: ""
-    # deviceFingerprint: ""
-    # _uuid: ""
-    # b_nut: ""
-    # b_lsid: ""
-    # rpdid: ""
-    # LIVE_BUVID: ""
-    # PVID: ""
-    # kfcFrom: ""
-    # kfcSource: ""
-    # kfcTime: ""
-    # bp_t_offset_0: ""
+  cookies:               # 浏览器指纹 cookie（Hot 项目必填，普通项目留空即可）
+    buvid3: ""
+    buvid4: ""
+    buvid_fp: ""
+    deviceFingerprint: ""
+    _uuid: ""
+    b_nut: ""
+    b_lsid: ""
+    rpdid: ""
+    LIVE_BUVID: ""
+    PVID: ""
+    kfcFrom: ""
+    kfcSource: ""
+    kfcTime: ""
+    bp_t_offset_0: ""    # 0 替换为你的 UID
 
 event:
   project_id: 0          # 活动ID

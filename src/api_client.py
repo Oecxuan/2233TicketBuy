@@ -99,7 +99,8 @@ class BilibiliAPI:
 
         # bili_ticket (如果用户没提供，自动生成)
         self._ensure_bili_ticket()
-
+        # 自动补全浏览器指纹 cookie（从 B站 SPI 获取 buvid3）
+        self._ensure_fingerprint_cookies()
         self._client = None
 
     # ==================== 初始化 ====================
@@ -117,6 +118,29 @@ class BilibiliAPI:
             logger.debug("ctoken state 初始化成功")
         except Exception as e:
             logger.warning(f"ctoken state 失败: {e}")
+
+    def _ensure_fingerprint_cookies(self):
+        """从 B站 SPI 获取 buvid3/buvid4，其余指纹需用户自行提供"""
+        # SPI 获取真实 buvid3/buvid4
+        if not self.cookies.get("buvid3") or not self.cookies.get("buvid4"):
+            try:
+                if HAS_CURL:
+                    r = curl_requests.get(
+                        "https://api.bilibili.com/x/frontend/finger/spi",
+                        headers={"User-Agent": "Mozilla/5.0"},
+                        impersonate=IMPORTANT, timeout=10)
+                else:
+                    c = httpx.Client(http2=True, timeout=10, verify=False)
+                    r = c.get("https://api.bilibili.com/x/frontend/finger/spi",
+                              headers={"User-Agent": "Mozilla/5.0"})
+                    c.close()
+                data = r.json().get("data", {})
+                if data.get("b_3") and not self.cookies.get("buvid3"):
+                    self.cookies["buvid3"] = data["b_3"]
+                if data.get("b_4") and not self.cookies.get("buvid4"):
+                    self.cookies["buvid4"] = data["b_4"]
+            except Exception:
+                pass
 
     def _ensure_bili_ticket(self):
         if "bili_ticket" in self.cookies and self.cookies["bili_ticket"]:
@@ -348,6 +372,8 @@ class BilibiliAPI:
             logger.info(f"下单成功! orderId={result['data']['orderId']}")
         else:
             logger.warning(f"下单失败: errno={errno} msg={result.get('msg','')}")
+            if errno in (100001, 900001):
+                logger.warning(">>> Hot 项目需在 config.yaml 的 user.cookies 中填入浏览器指纹 cookie（buvid3/buvid4/buvid_fp/deviceFingerprint/_uuid 等），详见 config.yaml.example")
         return result, token, ptoken
 
     # ==================== 辅助 ====================

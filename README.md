@@ -18,21 +18,59 @@ B站会员购抢票工具，仅供学习参考和研究使用。
 
 ## 功能
 
-- 扫码登录
-- 交互式选择项目
-- 双服务器时间同步
-- Windows 声音+弹窗（非阻塞）/ Linux 终端响铃 / QR 码
+- 扫码登录（SESSDATA 持久化）
+- 交互式选择活动 / 场次 / 票档 / 观演人
+- 双服务器时间同步，开售前精确等待
+- 蹲票模式：无票时监控库存，有票立即下单
+- 智能降速：412/429 自适应间隔 + 拥堵阶梯变速
+- 下单成功：Windows 弹窗+声音 / Linux 终端响铃 / 支付二维码
 
 ## 快速开始
 
 ```bash
+# 1. 安装依赖
 pip install -r requirements.txt
+
+# 2. 配置（复制示例文件并填入你的信息）
+copy config.yaml.example config.yaml
+
+# 3. 运行
 python main.py
 ```
 
-交互模式：登录 → 选活动 → 选票档 → 抢票。配置文件自动生成。
+交互模式：登录 → 选活动 → 选票档 → 抢票。
 
 也可直接 `python main.py --grab`（需已配置完成）。
+
+> **注意**：Hot 项目需在 `config.yaml` 的 `user.cookies` 中填入浏览器指纹 cookie，格式如下：
+> ```yaml
+> user:
+>   cookies:
+>     buvid3: ""           # 必填
+>     buvid4: ""           # 必填
+>     buvid_fp: ""         # 必填
+>     deviceFingerprint: ""# 必填
+>     _uuid: ""            # 必填
+>     b_nut: ""            # 必填
+>     b_lsid: ""           # 必填
+>     rpdid: ""            # 选填
+>     LIVE_BUVID: ""       # 选填
+>     PVID: ""             # 选填
+>     kfcFrom: ""          # 选填
+>     kfcSource: ""        # 选填
+>     kfcTime: ""          # 选填
+>     bp_t_offset_0: ""    # 选填（0 替换为你的 UID）
+> ```
+> 获取方式：浏览器登录 B站 → F12 → Application → Cookies → `bilibili.com`，复制对应值。一次配置长期有效。普通项目无需此步骤。
+
+## 命令行参数
+
+| 参数 | 说明 |
+|------|------|
+| `python main.py` | 交互模式（推荐） |
+| `python main.py --grab` | 直接抢票（需已配置） |
+| `python main.py --login` | 仅登录 |
+| `python main.py -c config.yaml` | 指定配置文件 |
 
 ## 下载
 

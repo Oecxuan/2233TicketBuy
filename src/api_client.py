@@ -373,7 +373,7 @@ class BilibiliAPI:
         else:
             logger.warning(f"下单失败: errno={errno} msg={result.get('msg','')}")
             if errno in (100001, 900001):
-                logger.warning(">>> Hot 项目需在 config.yaml 的 user.cookies 中填入浏览器指纹 cookie（buvid3/buvid4/buvid_fp/deviceFingerprint/_uuid 等），详见 config.yaml.example")
+                logger.warning(">>> Hot 项目需在 config.yaml 的 user.cookies 填入浏览器指纹 cookie，详见 config.yaml.example")
         return result, token, ptoken
 
     # ==================== 辅助 ====================

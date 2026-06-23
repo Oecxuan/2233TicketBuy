@@ -32,7 +32,7 @@ B站会员购抢票工具，仅供学习参考和研究使用。
 pip install -r requirements.txt
 
 # 2. 配置（复制示例文件并填入你的信息）
-copy config.yaml.example config.yaml
+copy config_example.yaml config.yaml
 
 # 3. 运行
 python main.py

@@ -208,7 +208,7 @@ class BilibiliAPI:
             return resp.json()
         except Exception:
             logger.warning(f"_request 响应非JSON: {resp.status_code} {resp.text[:200]}")
-            return {"errno": -1, "msg": f"HTTP {resp.status_code}", "data": {}}
+            return {"errno": resp.status_code, "msg": f"HTTP {resp.status_code}", "data": {}}
 
     # ==================== 项目信息 ====================
 

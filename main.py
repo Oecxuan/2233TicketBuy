@@ -27,6 +27,13 @@ for _btb in ['cptoken', 'util.TimeUtil', 'util.request', 'util', 'ntplib',
     _l.propagate = False
     _l.handlers.clear()
 
+# cptoken_vendor 内部用的是 loguru，logging 抑制对它无效，单独移除其输出
+try:
+    from loguru import logger as _loguru_logger
+    _loguru_logger.remove()
+except Exception:
+    pass
+
 # 清理 btb*.log 文件 + btb_logs 目录
 def _clean_btb_logs():
     for _f in _os.listdir('.'):
@@ -78,6 +85,7 @@ from src.config import ConfigManager, Config
 from src.qrcode_login import login_interactive
 from src.api_client import create_api_client
 from src.ticket_grabber import TicketGrabber, grab_ticket_interactive
+from src.logger import configure_logging
 from src import __version__
 
 
@@ -195,7 +203,21 @@ def select_viewers(api, count):
         print("请先在B站APP或网页端添加观演人")
         input_id = input("\n请输入观演人ID（如果不需要实名制可直接回车）: ").strip()
         if input_id:
-            return [int(input_id)]
+            try:
+                viewer_id = int(input_id)
+            except ValueError:
+                print("观演人ID必须是数字，已跳过")
+                return []
+            # 返回与接口一致的结构，否则下游 v.get('name') 会抛 AttributeError
+            return [{
+                "id": viewer_id,
+                "name": "",
+                "tel": "",
+                "tel_masked": "",
+                "personal_id": "",
+                "id_type": 0,
+                "verify_status": 1,
+            }]
         return []
     
     print("\n可用观演人:")
@@ -656,6 +678,16 @@ def main():
         print(f"配置文件不存在: {args.config}")
         print("将使用默认配置")
         config = config_manager.get_default_config()
+
+    # 应用配置文件里的日志设置（此前 logger 用的是导入时的默认值）
+    try:
+        configure_logging(
+            file_path=config.logging.file_path,
+            level=config.logging.level,
+            save_to_file=config.logging.save_to_file,
+        )
+    except Exception as e:
+        print(f"日志配置应用失败（忽略）: {e}")
     
     if args.login:
         login(config_manager)

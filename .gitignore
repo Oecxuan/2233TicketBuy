@@ -25,6 +25,12 @@ config.yaml
 logs/
 viewers_cache.json
 *.log
+downloaded_files/
+
+# Test
+.pytest_cache/
+.coverage
+htmlcov/
 
 # OS files
 .DS_Store

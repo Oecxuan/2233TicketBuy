@@ -87,6 +87,38 @@ pip install -r requirements.txt pyinstaller
 python -m PyInstaller --clean 2233TicketBuy.spec
 ```
 
+## 测试
+
+```bash
+pip install -r requirements-dev.txt
+
+python -m pytest              # 全部测试
+python -m pytest -m smoke     # 仅入口冒烟测试
+python -m pytest -v tests/test_config.py   # 单个文件
+```
+
+测试全部使用替身与 mock，**不会访问 B站接口**，也不会读写你的 `config.yaml`。
+
+| 测试文件 | 覆盖内容 |
+| --- | --- |
+| `tests/test_config.py` | 配置读写往返、未知键容错、保存不丢字段、校验规则 |
+| `tests/test_cptoken.py` | ctoken 字节布局、随机化边界、状态演化 |
+| `tests/test_api_client.py` | cookie 装配、prepare/下单参数、错误响应处理 |
+| `tests/test_ticket_grabber.py` | 错误码分派、库存检测、抢票主循环、开售等待 |
+| `tests/test_qrcode_login.py` | 扫码状态机、cookie 按名字解析 |
+| `tests/test_logger.py` | 日志落盘、级别切换、handler 不重复挂载 |
+| `tests/test_main_helpers.py` | 票档状态描述、观演人选择与缓存 |
+| `tests/test_smoke_cli.py` | `main.py --help` / `--create-example` 冒烟 |
+
+## 已知限制
+
+| 场景 | 现状 |
+| --- | --- |
+| **选座项目** | 不支持。`prepare` 返回 `80110000 座位信息为空`，程序会立即停止并提示改用 B站 App 手动选座 |
+| **实体票收货地址** | 未实现 `deliver_info`。需要填写收货地址的项目可能下单失败 |
+| 强实名项目 | 已支持（`prepare` 传观演人列表、`createV2` 传 JSON 字符串），但仅在无 hot 的真实活动上验证过 |
+| gaia 极验 / `biliword` | 未实现，仅支持 `empty` 类型自动通过 |
+
 ## 许可证
 
 MIT License

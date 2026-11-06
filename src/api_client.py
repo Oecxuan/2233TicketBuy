@@ -233,10 +233,22 @@ class BilibiliAPI:
 
     # ==================== 下单核心 ====================
 
+    # prepare 阶段值得重试的错误码；其余属于业务错误，重试无意义
+    PREPARE_RETRYABLE_ERRNOS = (-401, -412, 412, 429, -500, -504)
+
     def prepare_token(self, project_id: int, screen_id: int,
-                      sku_id: int, count: int) -> dict:
+                      sku_id: int, count: int,
+                      buyer_info: Optional[list] = None,
+                      retry: int = 10) -> tuple:
         """
         prepare_token - 必须传 ctoken 以获取 base64 格式 ptoken
+
+        buyer_info: 强实名项目必须带上观演人列表（list，不是 JSON 字符串），
+                    否则返回的 token 不会绑定观演人。
+
+        Returns:
+            (data, errno, msg)。errno==0 表示成功；
+            业务错误（如 80110000 座位信息为空）不再空转重试，直接返回真实错误码。
         """
         ctoken = ""
         if HAS_CPTOKEN and self._ctoken_state:
@@ -249,29 +261,44 @@ class BilibiliAPI:
         body = {
             "project_id": project_id, "screen_id": screen_id,
             "order_type": 1, "count": count, "sku_id": sku_id,
-            "buyer_info": "", "ignoreRequestLimit": True,
+            "buyer_info": buyer_info if buyer_info is not None else "",
+            "ignoreRequestLimit": True,
             "ticket_agent": "", "newRisk": True,
             "requestSource": "neul-next", "token": ctoken,
         }
 
-        for _ in range(10):  # 重试最多 10 次
+        last_errno, last_msg = -1, ""
+        for attempt in range(1, retry + 1):
             try:
                 result = self._request("POST",
                     f"{BASE_URL}/ticket/order/prepare?project_id={project_id}",
                     json_data=body,
                     referer=f"https://show.bilibili.com/platform/detail.html?id={project_id}")
                 errno = result.get("errno", -1)
+                msg = result.get("msg", "") or result.get("message", "")
                 if errno == 0:
-                    return result.get("data", {})
-                if errno == -401:
-                    time.sleep(1)
-                    continue
-                logger.warning(f"prepare 失败 (errno={errno}): {result.get('msg','')}")
-                time.sleep(0.5)
+                    data = result.get("data", {}) or {}
+                    logger.debug(
+                        "prepare 成功: ptoken=%s, buyers=%s, ctoken=%s" % (
+                            "有" if data.get("ptoken") else "无",
+                            len(buyer_info) if isinstance(buyer_info, list) else 0,
+                            "有" if ctoken else "无",
+                        )
+                    )
+                    return data, 0, ""
+
+                last_errno, last_msg = errno, msg
+                logger.warning(
+                    f"prepare 失败 (errno={errno}, 第{attempt}/{retry}次): {msg}")
+                if errno not in self.PREPARE_RETRYABLE_ERRNOS:
+                    # 业务错误（席位、限购、未开售等），继续重试只会刷屏
+                    break
+                time.sleep(1 if errno == -401 else 0.5)
             except Exception as e:
-                logger.warning(f"prepare 异常: {e}")
+                last_errno, last_msg = -1, f"{type(e).__name__}: {e}"
+                logger.warning(f"prepare 异常 (第{attempt}/{retry}次): {last_msg}")
                 time.sleep(0.5)
-        return {}
+        return {}, last_errno, last_msg
 
     def create_order(self, project_id: int, screen_id: int,
                      sku_id: int, count: int, pay_money: int = 0,
@@ -280,22 +307,38 @@ class BilibiliAPI:
                      viewer_id: int = None,
                      cached_token: str = "", cached_ptoken: str = "",
                      is_hot: bool = False,
-                     cached_pay_money: int = 0) -> tuple:
+                     cached_pay_money: int = 0,
+                     id_bind: Optional[int] = None) -> tuple:
         """
         创建订单 - 已验证可成功下单
         返回: (result_dict, token, ptoken)
+
+        id_bind: 已缓存的项目 id_bind。传入可跳过 get_project_info 请求，
+                 抢占票时间窗（每次下单少一次往返）。
         """
-        # 获取项目信息
-        try:
-            project = self.get_project_info(project_id)
-            id_bind = project.id_bind
-        except Exception:
-            id_bind = 0
+        # 未缓存时才查询项目信息
+        if id_bind is None:
+            try:
+                project = self.get_project_info(project_id)
+                id_bind = project.id_bind
+            except Exception:
+                id_bind = 0
+
+        # 强实名项目：prepare 阶段就要带上观演人，否则返回的 token 不绑定观演人。
+        # 对齐参考实现：prepare 传 list，create 传 JSON 字符串。
+        buyer_list = None
+        if id_bind >= 1 and viewers:
+            buyer_list = self._build_buyer_list(viewers)
 
         # prepare 获取 token/ptoken
-        prep_data = self.prepare_token(project_id, screen_id, sku_id, count)
+        prep_data, prep_errno, prep_msg = self.prepare_token(
+            project_id, screen_id, sku_id, count, buyer_info=buyer_list)
         if not prep_data:
-            return {"errno": -1, "msg": "prepare 失败", "data": {}}, "", ""
+            # 把真实错误码透传给上层，而不是统一吞成 -1
+            errno_out = prep_errno if prep_errno not in (0, None) else -1
+            return ({"errno": errno_out,
+                     "msg": f"prepare 失败: {prep_msg or '无有效返回'}",
+                     "data": {}}, "", "")
 
         token = prep_data.get("token", "")
         ptoken = prep_data.get("ptoken", "")
@@ -312,33 +355,29 @@ class BilibiliAPI:
             "deviceId": self.device_id,
         }
 
-        # buyer_info
-        if id_bind >= 1 and viewers:
-            buyer_list = [{
-                "id": v.get("id"), "uid": v.get("uid", int(self.config.user.dede_user_id or 0)),
-                "name": v.get("name", ""), "tel": v.get("tel_masked", v.get("tel", "")),
-                "personal_id": v.get("personal_id", ""), "id_type": v.get("id_type", 0),
-                "verify_status": v.get("verify_status", 1),
-                "isBuyerInfoVerified": True, "isBuyerValid": True,
-            } for v in viewers]
+        # buyer_info（create 阶段需要 JSON 字符串；prepare 阶段传的是 list）
+        if buyer_list is not None:
             order_data["buyer_info"] = json.dumps(buyer_list, ensure_ascii=False)
-        elif id_bind >= 1 and not viewers:
-            # 从 prepare 数据中获取观演人
-            prep_buyers = prep_data.get("buyer_info", [])
-            if prep_buyers:
-                buyer_list = [{
-                    "id": b.get("id"), "uid": b.get("uid", int(self.config.user.dede_user_id or 0)),
-                    "name": b.get("name", ""), "tel": b.get("tel_masked", b.get("tel", "")),
-                    "personal_id": b.get("personal_id", ""), "id_type": b.get("id_type", 0),
-                    "verify_status": b.get("verify_status", 1),
-                    "isBuyerInfoVerified": True, "isBuyerValid": True,
-                } for b in prep_buyers]
-                order_data["buyer_info"] = json.dumps(buyer_list, ensure_ascii=False)
+        elif id_bind >= 1:
+            # 未手选观演人时，沿用 prepare 返回的观演人
+            prep_buyers = prep_data.get("buyer_info", []) or []
+            if isinstance(prep_buyers, str):
+                order_data["buyer_info"] = prep_buyers or "[]"
+            elif prep_buyers:
+                order_data["buyer_info"] = json.dumps(
+                    self._build_buyer_list(prep_buyers), ensure_ascii=False)
             else:
-                # fallback: 空数组
                 order_data["buyer_info"] = "[]"
         else:
             order_data["buyer_info"] = "[]"
+
+        # 联系人信息：部分项目（无实名的普通项目）要求姓名+手机号，
+        # 缺失会返回 errno=209001「本项目需要联系人信息」。
+        # 为空时不发送，避免影响不需要联系人的项目。
+        if buyer_name:
+            order_data["buyer"] = buyer_name
+        if buyer_tel:
+            order_data["tel"] = buyer_tel
 
         # clickPosition
         origin = now_ms - random.randint(10000, 20000)
@@ -368,11 +407,53 @@ class BilibiliAPI:
             return {"errno": -1, "msg": str(e), "data": {}}, token, ptoken
 
         errno = result.get("errno", -1)
+        logger.debug(
+            "createV2: errno=%s, buyers=%s, ctoken=%s, ptoken=%s" % (
+                errno,
+                len(buyer_list) if buyer_list else 0,
+                "有" if order_data.get("ctoken") else "无",
+                "有" if ptoken else "无",
+            )
+        )
         if errno == 0:
             logger.info(f"下单成功! orderId={result['data']['orderId']}")
         else:
             logger.warning(f"下单失败: errno={errno} msg={result.get('msg','')}")
         return result, token, ptoken
+
+    # ==================== 观演人 ====================
+
+    def _default_uid(self) -> int:
+        """DedeUserID 转 int，异常时回退 0"""
+        try:
+            return int(str(self.config.user.dede_user_id or "0").strip())
+        except (TypeError, ValueError):
+            return 0
+
+    def _build_buyer_list(self, viewers: list) -> list:
+        """
+        把观演人转成接口需要的 buyer_info 结构。
+
+        prepare 阶段传 list，create 阶段再 json.dumps 成字符串。
+        非 dict 项会被跳过，避免脏数据导致 AttributeError。
+        """
+        uid = self._default_uid()
+        buyers = []
+        for viewer in viewers or []:
+            if not isinstance(viewer, dict):
+                continue
+            buyers.append({
+                "id": viewer.get("id"),
+                "uid": viewer.get("uid", uid),
+                "name": viewer.get("name", ""),
+                "tel": viewer.get("tel_masked", viewer.get("tel", "")),
+                "personal_id": viewer.get("personal_id", ""),
+                "id_type": viewer.get("id_type", 0),
+                "verify_status": viewer.get("verify_status", 1),
+                "isBuyerInfoVerified": True,
+                "isBuyerValid": True,
+            })
+        return buyers
 
     # ==================== 辅助 ====================
 

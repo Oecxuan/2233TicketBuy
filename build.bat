@@ -17,6 +17,6 @@ python -m PyInstaller --clean 2233TicketBuy.spec
 
 echo [3/3] Done!
 echo.
-echo Output: dist\2233TicketBuy.exe
+echo Output: dist\2233TicketBuy_v*.exe
 echo.
 pause

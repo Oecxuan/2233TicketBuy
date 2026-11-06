@@ -39,10 +39,11 @@ strategy:
   concurrency: 1         # 并发数
   advance_ms: 0          # 提前量（毫秒）
   timeout_seconds: 10    # 超时（秒）
-  after_sale_begin_delay: 0.2
-  order_interval: 0.3
-  delta: 0.05
-  enable_stock_check: true
+  after_sale_begin_delay: 0.2     # 开售后再等多久开始下单（秒）
+  order_interval: 0.3             # 下单间隔（秒）
+  delta: 0.05                     # 速率偏差（秒）
+  enable_stock_check: true        # true=蹲票模式(有票才打) / false=硬打模式
+  stock_check_available_delay: 0  # 查到有票后额外等待（秒）
 
 proxy:
   enabled: false

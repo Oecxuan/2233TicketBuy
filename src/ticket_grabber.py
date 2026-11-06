@@ -61,10 +61,14 @@ class TicketGrabber:
     ERROR_CODE_SYSTEM = 100004        # 系统繁忙
     
     def __init__(self, config: Config, viewers: Optional[List[Dict]] = None,
-                 interrupt_event: Optional[threading.Event] = None):
-        """初始化抢票器"""
+                 interrupt_event: Optional[threading.Event] = None,
+                 api: Optional[BilibiliAPI] = None):
+        """初始化抢票器
+
+        api: 可注入已有的 API 客户端（方便测试、复用连接、避免重复握手）。
+        """
         self.config = config
-        self.api = create_api_client(config)
+        self.api = api if api is not None else create_api_client(config)
         self.viewers = viewers or []
         self.phase = GrabPhase.WAITING
         self.result: Optional[TicketResult] = None
@@ -79,6 +83,8 @@ class TicketGrabber:
             self.buyer_name = v.get("name", "")
             self.buyer_tel = v.get("tel", "")
         logger.info(f"购票人: {self.buyer_name}, 电话: {self.buyer_tel}")
+        if self.viewers and (not self.buyer_name or not self.buyer_tel):
+            logger.warning("购票人缺少姓名或手机号，部分项目下单会返回 209001")
         
         # 抢票参数
         self.grab_interval = getattr(config.strategy, 'order_interval', 0.3)
@@ -110,6 +116,7 @@ class TicketGrabber:
         self._delta = getattr(config.strategy, 'delta', 0.05)
         self._raw_stock_status = 0  # 原始 stockStatus
         self._congestion_count = 0  # 拥堵错误计数（每轮重置）
+        self._attempt_count = 0  # 当前尝试次数（grab_ticket 每轮更新）
         self._consecutive_congestion = 0  # 连续拥堵计数（跨轮累积，非拥堵错误才重置）
         
         # 智能间隔（对齐 BHYG last_order_time / last_order_check_time）
@@ -438,6 +445,8 @@ class TicketGrabber:
                 cached_ptoken="",
                 is_hot=self._is_hot,
                 cached_pay_money=self._cached_pay_money,
+                # run() 已缓存 id_bind，跳过每轮重复的项目详情请求
+                id_bind=getattr(self, "_project_id_bind", None),
             )
             
             errno = result.get("errno", result.get("code", -1))
@@ -548,7 +557,12 @@ class TicketGrabber:
             logger.warning("开售已结束/订单太晚 (100051)")
             return False
         if errno == 209001:
-            logger.error("缺少联系人信息 (209001)")
+            logger.error("本项目需要联系人姓名和手机号 (209001)")
+            logger.error("请重新「选择活动」，选择带有手机号的观演人后再试")
+            return False
+        if errno == 80110000:
+            logger.error("该项目需要选座，当前版本不支持选座项目 (80110000)")
+            logger.error("请改用 B站 App 手动选座购买")
             return False
         
         # ⚡ 闪电模式：除了 412，所有错误硬打不降速
@@ -849,6 +863,13 @@ class TicketGrabber:
             
             logger.info(f"项目: {project.name}")
             logger.info(f"开售: {sale_time_str}")
+            realname_text = (f"是 (id_bind={project.id_bind})"
+                             if project.id_bind >= 1 else "否")
+            hot_text = "是" if (project.hot_project or self._is_hot) else "否"
+            logger.info(
+                f"实名: {realname_text}  |  hot: {hot_text}  |  "
+                f"观演人: {len(self.viewers)}人  |  联系人: {self.buyer_name or '未设置'}"
+            )
             logger.info(f"场次: {screen.name}  |  票档: {sku_desc}  |  ¥{sku_price} x {count}张  |  总价: ¥{total_price}")
             
             # 缓存项目信息，避免每次下单重复查询

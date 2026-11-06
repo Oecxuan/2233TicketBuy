@@ -7,7 +7,37 @@ import os
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, asdict
+
+
+def _dataclass_from_dict(cls, raw) -> Any:
+    """
+    用 dict 构造 dataclass，忽略未知字段。
+
+    兼容场景：用户手写配置 / 旧版本遗留键 / 拼写错误的键。
+    直接 Cls(**raw) 会抛 TypeError 导致整个配置加载失败。
+    """
+    if not isinstance(raw, dict):
+        return cls()
+    known = {f.name for f in fields(cls)}
+    return cls(**{k: v for k, v in raw.items() if k in known})
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    递归合并配置字典，保留 base 中的未知键。
+
+    空字典不覆盖 base 中已有的内容，避免把用户手填的 cookies 抹掉。
+    """
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        elif isinstance(value, dict) and not value:
+            result.setdefault(key, {})
+        else:
+            result[key] = value
+    return result
 
 
 @dataclass
@@ -125,14 +155,16 @@ class ConfigManager:
         if data is None:
             data = {}
         
-        # 解析配置
+# 解析配置（忽略未知键，避免旧配置/手写多写的键导致加载失败）
         self.config = Config(
-            user=UserConfig(**data.get("user", {})),
-            event=EventConfig(**data.get("event", {})),
-            strategy=StrategyConfig(**data.get("strategy", {})),
-            proxy=ProxyConfig(**data.get("proxy", {})),
-            logging=LoggingConfig(**data.get("logging", {})),
-            notification=NotificationConfig(**data.get("notification", {})),
+            user=_dataclass_from_dict(UserConfig, data.get("user", {})),
+            event=_dataclass_from_dict(EventConfig, data.get("event", {})),
+            strategy=_dataclass_from_dict(StrategyConfig, data.get("strategy", {})),
+            proxy=_dataclass_from_dict(ProxyConfig, data.get("proxy", {})),
+            logging=_dataclass_from_dict(LoggingConfig, data.get("logging", {})),
+            notification=_dataclass_from_dict(
+                NotificationConfig, data.get("notification", {})
+            ),
         )
         
         return self.config
@@ -150,69 +182,36 @@ class ConfigManager:
         if config is None:
             raise ValueError("没有可保存的配置")
         
-        # 转换为字典
+# 转换为字典（asdict 自动包含所有字段，新增字段不会漏保存）
         data = {
-            "user": {
-                "sessdata": config.user.sessdata,
-                "bili_jct": config.user.bili_jct,
-                "dede_user_id": config.user.dede_user_id,
-                "dede_user_id_ckmd5": config.user.dede_user_id_ckmd5,
-                "device_id": config.user.device_id,
-                "cookies": config.user.cookies,
-            },
-            "event": {
-                "project_id": config.event.project_id,
-                "screen_id": config.event.screen_id,
-                "sku_id": config.event.sku_id,
-                "count": config.event.count,
-                "viewer_id": config.event.viewer_id,
-                "hot_project": config.event.hot_project,
-                "pay_money": config.event.pay_money,
-                "viewers": config.event.viewers,
-            },
-            "strategy": {
-                "retry_count": config.strategy.retry_count,
-                "retry_delay_ms": config.strategy.retry_delay_ms,
-                "concurrency": config.strategy.concurrency,
-                "advance_ms": config.strategy.advance_ms,
-                "timeout_seconds": config.strategy.timeout_seconds,
-                "enable_stock_check": config.strategy.enable_stock_check,
-            },
-            "proxy": {
-                "enabled": config.proxy.enabled,
-                "http": config.proxy.http,
-                "https": config.proxy.https,
-                "socks5": config.proxy.socks5,
-            },
-            "logging": {
-                "level": config.logging.level,
-                "save_to_file": config.logging.save_to_file,
-                "file_path": config.logging.file_path,
-                "verbose": config.logging.verbose,
-            },
-            "notification": {
-                "enabled": config.notification.enabled,
-            },
+            "user": asdict(config.user),
+            "event": asdict(config.event),
+            "strategy": asdict(config.strategy),
+            "proxy": asdict(config.proxy),
+            "logging": asdict(config.logging),
+            "notification": asdict(config.notification),
         }
-        
+
         # 确保目录存在
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # 保存配置：保留原文件的 cookies（用户手填），auth 字段正常更新
+
+        # 读回原文件并深合并：未知段落/未知键保留，已知键以内存配置为准。
+        # 空字典（如未加载配置时 cookies={}）不会覆盖用户手填的内容。
+        existing: Dict[str, Any] = {}
         if self.config_path.exists():
             try:
                 with open(self.config_path, "r", encoding="utf-8") as f:
-                    old = yaml.safe_load(f) or {}
-                old_cookies = old.get("user", {}).get("cookies", {})
-                if old_cookies:
-                    # 只保留有值的 cookie，空的不覆盖
-                    data.setdefault("user", {})["cookies"] = {
-                        k: v for k, v in old_cookies.items() if v
-                    }
+                    loaded = yaml.safe_load(f)
+                if isinstance(loaded, dict):
+                    existing = loaded
             except Exception:
-                pass
+                existing = {}
+
+        data = _deep_merge(existing, data)
+
         with open(self.config_path, "w", encoding="utf-8") as f:
-            yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True,
+                      sort_keys=False)
     
     def validate(self, config: Optional[Config] = None) -> list:
         """
@@ -275,52 +274,21 @@ class ConfigManager:
         """
         example_path = self.config_path.with_suffix(".yaml.example")
         config = self.get_default_config()
-        
-        # 保存示例配置
+
+        # 直接用默认配置生成，避免手写字典漏字段
+        data = {
+            "user": asdict(config.user),
+            "event": asdict(config.event),
+            "strategy": asdict(config.strategy),
+            "proxy": asdict(config.proxy),
+            "logging": asdict(config.logging),
+            "notification": asdict(config.notification),
+        }
+
         with open(example_path, "w", encoding="utf-8") as f:
-            yaml.dump(
-                {
-                    "user": {
-                        "sessdata": "你的SESSDATA",
-                        "bili_jct": "你的bili_jct",
-                        "dede_user_id": "你的DedeUserID",
-                        "dede_user_id_ckmd5": "你的DedeUserID__ckMd5",
-                    },
-                    "event": {
-                        "project_id": 12345,
-                        "screen_id": 67890,
-                        "sku_id": 111,
-                        "count": 1,
-                        "viewer_id": 0,
-                    },
-                    "strategy": {
-                        "retry_count": 3,
-                        "retry_delay_ms": 100,
-                        "concurrency": 1,
-                        "advance_ms": 500,
-                        "timeout_seconds": 10,
-                    },
-                    "proxy": {
-                        "enabled": False,
-                        "http": "",
-                        "https": "",
-                        "socks5": "",
-                    },
-                    "logging": {
-                        "level": "INFO",
-                        "save_to_file": True,
-                        "file_path": "logs/ticket_grabber.log",
-                        "verbose": False,
-                    },
-                    "notification": {
-                        "enabled": False,
-                    },
-                },
-                f,
-                default_flow_style=False,
-                allow_unicode=True,
-            )
-        
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True,
+                      sort_keys=False)
+
         print(f"示例配置文件已创建: {example_path}")
 
 

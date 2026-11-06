@@ -22,6 +22,37 @@ class LoginResult:
     message: str = ""
 
 
+# B站 cookie 名 -> LoginResult 字段名
+_COOKIE_FIELDS = {
+    "SESSDATA": "sessdata",
+    "bili_jct": "bili_jct",
+    "DedeUserID": "dede_user_id",
+    "DedeUserID__ckMd5": "dede_user_id_ckmd5",
+}
+
+
+def extract_login_cookies(cookie_items) -> Dict[str, str]:
+    """
+    把 cookie 列表 [{name, value}, ...] 或字典 {name: value} 解析为登录字段。
+
+    按 cookie 名字匹配而不是数组下标 —— B站不保证返回顺序，
+    下标取值一旦顺序变化就会静默取错（例如把 bili_jct 当成 SESSDATA）。
+    """
+    if isinstance(cookie_items, dict):
+        pairs = cookie_items
+    else:
+        pairs = {
+            item.get("name", ""): item.get("value", "")
+            for item in (cookie_items or [])
+            if isinstance(item, dict)
+        }
+
+    return {
+        field_name: pairs.get(cookie_name, "")
+        for cookie_name, field_name in _COOKIE_FIELDS.items()
+    }
+
+
 class QRCodeLogin:
     """B站二维码登录"""
     
@@ -131,6 +162,29 @@ class QRCodeLogin:
             result["_cookies"] = dict(response.cookies)
             return result
     
+    def _build_login_result(self, data: Dict, raw_result: Dict):
+        """
+        从扫码成功响应中提取登录凭据。
+
+        优先 cookie_info.cookies（按名字匹配），
+        其次响应头 Set-Cookie（_cookies）。
+        都拿不到时返回 None，由调用方决定如何提示。
+        """
+        cookie_info = data.get("cookie_info", {}) or {}
+        cookies = cookie_info.get("cookies", []) or []
+        if cookies:
+            extracted = extract_login_cookies(cookies)
+            if extracted.get("sessdata"):
+                return LoginResult(success=True, message="登录成功", **extracted)
+
+        header_cookies = raw_result.get("_cookies", {}) or {}
+        if header_cookies:
+            extracted = extract_login_cookies(header_cookies)
+            if extracted.get("sessdata"):
+                return LoginResult(success=True, message="登录成功", **extracted)
+
+        return None
+
     def login(self, display_qrcode: bool = True) -> LoginResult:
         """执行登录流程"""
         try:
@@ -155,38 +209,10 @@ class QRCodeLogin:
                 code = data.get("code", -1)
                 
                 if code == self.STATUS_SUCCESS:
-                    # 登录成功 - 尝试多种方式获取cookie
-                    print(f"[调试] 登录成功，data keys: {list(data.keys())}")
-                    
-                    # 方式1：从data.cookie_info获取
-                    cookie_info = data.get("cookie_info", {})
-                    cookies = cookie_info.get("cookies", [])
-                    
-                    if cookies:
-                        print(f"[调试] 从cookie_info获取到 {len(cookies)} 个cookie")
-                        return LoginResult(
-                            success=True,
-                            sessdata=cookies[0]["value"] if len(cookies) > 0 else "",
-                            bili_jct=cookies[1]["value"] if len(cookies) > 1 else "",
-                            dede_user_id=cookies[2]["value"] if len(cookies) > 2 else "",
-                            dede_user_id_ckmd5=cookies[3]["value"] if len(cookies) > 3 else "",
-                            message="登录成功",
-                        )
-                    
-                    # 方式2：从响应头Set-Cookie获取
-                    all_cookies = result.get("_cookies", {})
-                    if all_cookies:
-                        print(f"[调试] 从响应头获取到cookie: {list(all_cookies.keys())}")
-                        return LoginResult(
-                            success=True,
-                            sessdata=all_cookies.get("SESSDATA", ""),
-                            bili_jct=all_cookies.get("bili_jct", ""),
-                            dede_user_id=all_cookies.get("DedeUserID", ""),
-                            dede_user_id_ckmd5=all_cookies.get("DedeUserID__ckMd5", ""),
-                            message="登录成功",
-                        )
-                    
-                    # 方式3：检查是否有其他字段
+                    login_result = self._build_login_result(data, result)
+                    if login_result is not None:
+                        return login_result
+                    # 调试信息：便于定位 B站接口字段变化
                     print(f"[调试] 完整data: {data}")
                     return LoginResult(
                         success=False,
@@ -238,31 +264,9 @@ class QRCodeLogin:
                 code = data.get("code", -1)
                 
                 if code == self.STATUS_SUCCESS:
-                    cookie_info = data.get("cookie_info", {})
-                    cookies = cookie_info.get("cookies", [])
-                    
-                    if cookies:
-                        return LoginResult(
-                            success=True,
-                            sessdata=cookies[0]["value"] if len(cookies) > 0 else "",
-                            bili_jct=cookies[1]["value"] if len(cookies) > 1 else "",
-                            dede_user_id=cookies[2]["value"] if len(cookies) > 2 else "",
-                            dede_user_id_ckmd5=cookies[3]["value"] if len(cookies) > 3 else "",
-                            message="登录成功",
-                        )
-                    
-                    all_cookies = result.get("_cookies", {})
-                    if all_cookies:
-                        return LoginResult(
-                            success=True,
-                            sessdata=all_cookies.get("SESSDATA", ""),
-                            bili_jct=all_cookies.get("bili_jct", ""),
-                            dede_user_id=all_cookies.get("DedeUserID", ""),
-                            dede_user_id_ckmd5=all_cookies.get("DedeUserID__ckMd5", ""),
-                            message="登录成功",
-                        )
-                    
-                    print(f"[调试] data keys: {list(data.keys())}")
+                    login_result = self._build_login_result(data, result)
+                    if login_result is not None:
+                        return login_result
                     print(f"[调试] 完整data: {data}")
                     return LoginResult(
                         success=False,
